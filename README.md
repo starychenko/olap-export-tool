@@ -154,8 +154,6 @@ EXCEL_HEADER_FONT_SIZE=11
    ```powershell
    # Для Windows (PowerShell)
    .\setup.ps1   # Англійською
-   # або
-   .\setup_ukr.ps1   # Українською
    ```
 
 2. **Запустіть скрипт**:
