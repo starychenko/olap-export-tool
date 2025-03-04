@@ -19,6 +19,7 @@ load_dotenv()
 
 # Глобальні змінні для керування анімацією
 animation_running = False
+avg_query_time = None  # Середній час виконання запиту (ініціалізується при першому вимірі)
 
 # Додаємо шлях до Microsoft.AnalysisServices.AdomdClient.dll з .env
 adomd_dll_path = os.getenv('ADOMD_DLL_PATH')
@@ -63,8 +64,89 @@ def print_success(text):
 def print_progress(text):
     print(f"{Fore.BLUE}[{get_current_time()}] 🔄 {text}")
 
+# Функція для форматування часу у вигляді години:хвилини:секунди
+def format_time(seconds):
+    """Форматує час у секундах до читабельного формату (години, хвилини, секунди)"""
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    if hours > 0:
+        return f"{int(hours)} год {int(minutes)} хв {seconds:.2f} сек"
+    elif minutes > 0:
+        return f"{int(minutes)} хв {seconds:.2f} сек"
+    else:
+        return f"{seconds:.2f} сек"
+
+# Клас для відстеження прогресу та часу виконання завдання
+class TimeTracker:
+    """Клас для відстеження часу виконання та прогнозування завершення"""
+    def __init__(self, total_items):
+        self.total_items = total_items
+        self.start_time = time.time()
+        self.processed_items = 0
+        self.elapsed_times = []  # Зберігаємо час обробки кожного елемента
+    
+    def update(self, items_processed=1):
+        """Оновлює статус обробки після завершення елемента"""
+        current_time = time.time()
+        # Якщо це не перший елемент (для першого не можемо розрахувати час обробки)
+        if self.processed_items > 0:  
+            time_for_last_item = current_time - (self.start_time + sum(self.elapsed_times))
+            self.elapsed_times.append(time_for_last_item)
+        else:
+            # Для першого елемента просто зберігаємо час від початку
+            time_for_last_item = current_time - self.start_time
+            self.elapsed_times.append(time_for_last_item)
+        
+        self.processed_items += items_processed
+    
+    def get_elapsed_time(self):
+        """Повертає час, що минув з початку обробки"""
+        return time.time() - self.start_time
+    
+    def get_remaining_time(self):
+        """Прогнозує час, що залишився до завершення"""
+        if not self.elapsed_times or self.processed_items == 0:
+            return None  # Не можемо спрогнозувати без даних
+        
+        # Середній час на обробку одного елемента, виключаючи аномалії
+        avg_time_per_item = sum(self.elapsed_times) / len(self.elapsed_times)
+        
+        # Кількість елементів, що залишилося обробити
+        remaining_items = self.total_items - self.processed_items
+        
+        # Прогноз часу, що залишився
+        return avg_time_per_item * remaining_items
+    
+    def get_total_time(self):
+        """Прогнозує загальний час на виконання"""
+        remaining = self.get_remaining_time()
+        if remaining is None:
+            return self.get_elapsed_time()  # Повертаємо лише час, що пройшов
+        return self.get_elapsed_time() + remaining
+    
+    def get_percentage_complete(self):
+        """Повертає відсоток виконання завдання"""
+        return (self.processed_items / self.total_items) * 100 if self.total_items > 0 else 0
+    
+    def get_progress_info(self):
+        """Повертає інформацію про прогрес у зручному форматі"""
+        elapsed = self.get_elapsed_time()
+        remaining = self.get_remaining_time()
+        total = self.get_total_time()
+        percentage = self.get_percentage_complete()
+        
+        info = f"Прогрес: {percentage:.1f}% ({self.processed_items}/{self.total_items})\n"
+        info += f"Минуло: {format_time(elapsed)}"
+        
+        if remaining is not None:
+            info += f" | Залишилось: {format_time(remaining)}"
+            info += f" | Всього: {format_time(total)}"
+        
+        return info
+
 # Функція для анімованого індикатора завантаження
-def loading_spinner(description):
+def loading_spinner(description, estimated_time=None):
     """Функція для відображення анімованого індикатора завантаження"""
     global animation_running
     animation_running = True
@@ -78,11 +160,23 @@ def loading_spinner(description):
     # Відображаємо анімацію поки вона активна
     while animation_running:
         elapsed = time.time() - start_time
-        mins, secs = divmod(int(elapsed), 60)
-        timeformat = f"{mins:02}:{secs:02}"
+        # Використовуємо нашу функцію format_time для форматування часу
+        elapsed_str = format_time(elapsed)
         
-        # Виводимо анімований рядок
-        message = f"{Fore.BLUE}[{get_current_time()}] {next(spinner)} {description} (триває: {timeformat})"
+        # Базовий рядок з інформацією
+        message = f"{Fore.BLUE}[{get_current_time()}] {next(spinner)} {description}"
+        
+        # Додаємо інформацію про час
+        message += f" | Минуло: {elapsed_str}"
+        
+        # Якщо є оцінка часу, додаємо її
+        if estimated_time is not None:
+            # Розраховуємо, скільки часу залишилось (з обмеженням знизу на 0)
+            remaining = max(0, estimated_time - elapsed)
+            # Додаємо інформацію про залишковий та загальний час
+            message += f" | Залишилось: {format_time(remaining)}"
+            message += f" | Всього: {format_time(estimated_time)}"
+        
         sys.stdout.write(f"\r{message}")
         sys.stdout.flush()
         time.sleep(0.1)
@@ -285,9 +379,19 @@ def run_mdx_query(connection, reporting_period):
         
         # Запускаємо індикатор завантаження в окремому потоці
         print_progress(f"Отримання даних з OLAP кубу...")
+        
+        # Оцінка часу виконання запиту, використовуючи усереднене значення у 5 хвилин
+        # Ви можете налаштувати це значення на основі ваших спостережень
+        estimated_query_time = 120  # 5 хвилин у секундах
+        
+        # Якщо є глобальна змінна з інформацією про середній час запитів, використовуємо її
+        global avg_query_time
+        if 'avg_query_time' in globals() and avg_query_time is not None:
+            estimated_query_time = avg_query_time
+        
         spinner_thread = threading.Thread(
             target=loading_spinner, 
-            args=("Отримання даних з OLAP кубу",)
+            args=("Отримання даних з OLAP кубу", estimated_query_time)
         )
         spinner_thread.daemon = True
         spinner_thread.start()
@@ -305,7 +409,16 @@ def run_mdx_query(connection, reporting_period):
             query_end_time = time.time()
             query_duration = query_end_time - query_start_time
             
-            print_success(f"Запит виконано за {query_duration:.2f} секунд. Отримано {len(rows)} рядків даних.")
+            # Оновлюємо середній час виконання запиту
+            if 'avg_query_time' not in globals() or avg_query_time is None:
+                avg_query_time = query_duration
+            else:
+                # Плавне оновлення середнього часу (алгоритм експоненційного згладжування)
+                # Alpha - коефіцієнт згладжування (0.3 означає, що новий вимір має вагу 30%)
+                alpha = 0.3
+                avg_query_time = (1 - alpha) * avg_query_time + alpha * query_duration
+            
+            print_success(f"Запит виконано за {format_time(query_duration)}. Отримано {len(rows)} рядків даних.")
             
             cursor.close()
             
@@ -485,7 +598,9 @@ def get_available_weeks(connection):
 def countdown_timer(seconds):
     """Відображає зворотній відлік"""
     for remaining in range(seconds, 0, -1):
-        sys.stdout.write(f"\r{Fore.YELLOW}[{get_current_time()}] ⏱️ Очікування: залишилось {remaining} секунд...")
+        # Форматуємо час, що залишився
+        time_left = format_time(remaining)
+        sys.stdout.write(f"\r{Fore.YELLOW}[{get_current_time()}] ⏱️ Очікування: залишилось {time_left}...")
         sys.stdout.flush()
         time.sleep(1)
     print()  # Переходимо на новий рядок після завершення
@@ -569,6 +684,10 @@ try:
     files_created = []
     
     print_info(f"Запуск обробки для {len(year_week_pairs)} тижнів...")
+    
+    # Ініціалізуємо трекер часу
+    time_tracker = TimeTracker(len(year_week_pairs))
+    
     for i, (year, week) in enumerate(year_week_pairs):
         # Для першого тижня не робимо затримку
         if i > 0:
@@ -578,6 +697,12 @@ try:
         
         reporting_period = f"{year}-{week:02d}"  # Формат РРРР-ТТ
         print(f"\n{Fore.CYAN}{'-' * 40}")
+        
+        # Відображаємо інформацію про прогрес обробки
+        if i > 0:  # Після обробки хоча б одного елемента можемо показувати прогноз
+            progress_info = time_tracker.get_progress_info()
+            print(f"{Fore.MAGENTA}{progress_info}")
+        
         print_info(f"Обробка тижня: {reporting_period} ({i+1}/{len(year_week_pairs)})")
         
         # Виконуємо запит і отримуємо результати
@@ -586,6 +711,9 @@ try:
         # Додаємо шлях до файлу до списку створених файлів
         if file_path:
             files_created.append(file_path)
+        
+        # Оновлюємо трекер часу після обробки елемента
+        time_tracker.update()
     
     # Завершення відліку часу
     end_time = time.time()
@@ -593,7 +721,20 @@ try:
     
     # Виводимо підсумок обробки
     print_header(f"ПІДСУМОК ОБРОБКИ")
-    print_success(f"Обробку завершено за {processing_time:.2f} секунд")
+    # Детальна інформація про час виконання
+    if len(year_week_pairs) > 1:
+        avg_time_per_week = processing_time / len(year_week_pairs)
+        print_info(f"Деталі часу виконання:")
+        print(f"   {Fore.CYAN}Загальний час:    {Fore.WHITE}{format_time(processing_time)}")
+        print(f"   {Fore.CYAN}Середній час на 1 тиждень: {Fore.WHITE}{format_time(avg_time_per_week)}")
+        if time_tracker.elapsed_times:
+            min_time = min(time_tracker.elapsed_times)
+            max_time = max(time_tracker.elapsed_times)
+            print(f"   {Fore.CYAN}Мінімальний час: {Fore.WHITE}{format_time(min_time)}")
+            print(f"   {Fore.CYAN}Максимальний час: {Fore.WHITE}{format_time(max_time)}")
+    else:
+        print_success(f"Обробку завершено за {format_time(processing_time)}")
+
     print_info(f"Створено файлів: {len(files_created)}")
     
     if files_created:
