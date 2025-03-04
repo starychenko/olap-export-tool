@@ -70,6 +70,7 @@ def format_time(seconds):
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     
+    # Показуємо тільки ті одиниці виміру, які більше 0
     if hours > 0:
         return f"{int(hours)} год {int(minutes)} хв {seconds:.2f} сек"
     elif minutes > 0:
@@ -163,19 +164,8 @@ def loading_spinner(description, estimated_time=None):
         # Використовуємо нашу функцію format_time для форматування часу
         elapsed_str = format_time(elapsed)
         
-        # Базовий рядок з інформацією
-        message = f"{Fore.BLUE}[{get_current_time()}] {next(spinner)} {description}"
-        
-        # Додаємо інформацію про час
-        message += f" | Минуло: {elapsed_str}"
-        
-        # Якщо є оцінка часу, додаємо її
-        if estimated_time is not None:
-            # Розраховуємо, скільки часу залишилось (з обмеженням знизу на 0)
-            remaining = max(0, estimated_time - elapsed)
-            # Додаємо інформацію про залишковий та загальний час
-            message += f" | Залишилось: {format_time(remaining)}"
-            message += f" | Всього: {format_time(estimated_time)}"
+        # Базовий рядок з інформацією та часом виконання поточного запиту
+        message = f"{Fore.BLUE}[{get_current_time()}] {next(spinner)} {description} | Час: {elapsed_str}"
         
         sys.stdout.write(f"\r{message}")
         sys.stdout.flush()
