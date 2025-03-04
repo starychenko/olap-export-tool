@@ -82,42 +82,119 @@ def format_time(seconds):
 class TimeTracker:
     """Клас для відстеження часу виконання та прогнозування завершення"""
     def __init__(self, total_items):
+        """Ініціалізує трекер часу"""
         self.total_items = total_items
-        self.start_time = time.time()
         self.processed_items = 0
-        self.elapsed_times = []  # Зберігаємо час обробки кожного елемента
+        self.start_time = time.time()
+        self.elapsed_times = []  # Час на обробку кожного елемента (без пауз)
+        self.waiting_times = []  # Час пауз між елементами
+        self.last_item_end_time = self.start_time  # Час завершення обробки останнього елемента
+        self.currently_waiting = False  # Флаг, що показує, чи в режимі очікування ми зараз
+    
+    def start_waiting(self):
+        """Позначає початок періоду очікування"""
+        self.currently_waiting = True
+        self.wait_start_time = time.time()
+    
+    def end_waiting(self):
+        """Позначає кінець періоду очікування і зберігає час очікування"""
+        if self.currently_waiting:
+            wait_time = time.time() - self.wait_start_time
+            self.waiting_times.append(wait_time)
+            self.currently_waiting = False
     
     def update(self, items_processed=1):
         """Оновлює статус обробки після завершення елемента"""
         current_time = time.time()
-        # Якщо це не перший елемент (для першого не можемо розрахувати час обробки)
-        if self.processed_items > 0:  
-            time_for_last_item = current_time - (self.start_time + sum(self.elapsed_times))
-            self.elapsed_times.append(time_for_last_item)
-        else:
-            # Для першого елемента просто зберігаємо час від початку
-            time_for_last_item = current_time - self.start_time
-            self.elapsed_times.append(time_for_last_item)
         
+        # Якщо ми були в режимі очікування, завершуємо його
+        if self.currently_waiting:
+            self.end_waiting()
+        
+        # Розраховуємо час на останній елемент (без пауз)
+        if self.processed_items == 0:
+            # Для першого елемента просто від початку до поточного часу
+            processing_time = current_time - self.start_time
+        else:
+            # Для наступних елементів від кінця останнього елемента
+            processing_time = current_time - self.last_item_end_time
+            # Віднімаємо час очікування, якщо такий був
+            if self.waiting_times:
+                processing_time -= self.waiting_times[-1]
+        
+        # Зберігаємо час обробки і оновлюємо час закінчення останнього елемента
+        self.elapsed_times.append(processing_time)
+        self.last_item_end_time = current_time
         self.processed_items += items_processed
     
     def get_elapsed_time(self):
-        """Повертає час, що минув з початку обробки"""
+        """Повертає час, що минув з початку виконання"""
         return time.time() - self.start_time
     
-    def get_remaining_time(self):
-        """Прогнозує час, що залишився до завершення"""
+    def get_processing_time(self):
+        """Повертає час, витрачений на обробку даних (без пауз)"""
+        return sum(self.elapsed_times) if self.elapsed_times else 0
+    
+    def get_waiting_time(self):
+        """Повертає час, витрачений на паузи між запитами"""
+        return sum(self.waiting_times) if self.waiting_times else 0
+    
+    def get_remaining_processing_time(self):
+        """Прогнозує час обробки даних, що залишився (без пауз)"""
         if not self.elapsed_times or self.processed_items == 0:
             return None  # Не можемо спрогнозувати без даних
         
-        # Середній час на обробку одного елемента, виключаючи аномалії
-        avg_time_per_item = sum(self.elapsed_times) / len(self.elapsed_times)
+        # Використовуємо останні 5 елементів (або всі наявні, якщо їх менше) для більш точного прогнозу
+        num_items_to_use = min(5, len(self.elapsed_times))
+        recent_times = self.elapsed_times[-num_items_to_use:]
+        
+        # Простий розрахунок середнього часу на елемент
+        avg_time_per_item = sum(recent_times) / len(recent_times)
+        
+        # Діагностичний вивід перенесений у get_progress_info()
+        
+        # Якщо оброблено мало елементів, додаємо коефіцієнт безпеки
+        if len(self.elapsed_times) < 5 or self.processed_items < self.total_items * 0.1:
+            # Додаємо коефіцієнт, який залежить від кількості оброблених елементів
+            if len(self.elapsed_times) == 1:
+                safety_factor = 1.2  # +20% для першого елемента
+            elif len(self.elapsed_times) < 3:
+                safety_factor = 1.1  # +10% для 2-3 елементів
+            else:
+                safety_factor = 1.05  # +5% для 4-5 елементів
+                
+            avg_time_per_item *= safety_factor
         
         # Кількість елементів, що залишилося обробити
         remaining_items = self.total_items - self.processed_items
         
-        # Прогноз часу, що залишився
-        return avg_time_per_item * remaining_items
+        # Прогноз часу, що залишився на обробку
+        remaining_time = avg_time_per_item * remaining_items
+        
+        return remaining_time
+    
+    def get_remaining_wait_time(self):
+        """Прогнозує час очікування, що залишився"""
+        # Отримуємо час очікування з конфігурації замість жорстко закодованого значення
+        wait_time_per_item = int(os.getenv('QUERY_TIMEOUT', 30))  # Значення з .env або за замовчуванням 30 сек
+        
+        # Кількість елементів, що залишилося обробити (мінус 1, бо після останнього елемента немає очікування)
+        remaining_items = max(0, self.total_items - self.processed_items - 1)
+        
+        return wait_time_per_item * remaining_items
+    
+    def get_remaining_time(self):
+        """Прогнозує загальний час, що залишився до завершення (обробка + очікування)"""
+        processing_time = self.get_remaining_processing_time()
+        if processing_time is None:
+            return None
+            
+        waiting_time = self.get_remaining_wait_time()
+        return processing_time + waiting_time
+    
+    def get_percentage_complete(self):
+        """Повертає відсоток виконання завдання"""
+        return (self.processed_items / self.total_items) * 100 if self.total_items > 0 else 0
     
     def get_total_time(self):
         """Прогнозує загальний час на виконання"""
@@ -125,24 +202,79 @@ class TimeTracker:
         if remaining is None:
             return self.get_elapsed_time()  # Повертаємо лише час, що пройшов
         return self.get_elapsed_time() + remaining
-    
-    def get_percentage_complete(self):
-        """Повертає відсоток виконання завдання"""
-        return (self.processed_items / self.total_items) * 100 if self.total_items > 0 else 0
-    
+        
     def get_progress_info(self):
         """Повертає інформацію про прогрес у зручному форматі"""
+        # Отримуємо базові значення
         elapsed = self.get_elapsed_time()
-        remaining = self.get_remaining_time()
+        processing_time = self.get_processing_time()
+        waiting_time = self.get_waiting_time()
+        remaining_processing = self.get_remaining_processing_time()
+        remaining_waiting = self.get_remaining_wait_time()
+        remaining_total = self.get_remaining_time()
         total = self.get_total_time()
         percentage = self.get_percentage_complete()
         
+        # Розрахунок діагностичних значень для виводу
+        debug_output = True  # Змінна для керування дебаг-виводом
+        if debug_output and self.elapsed_times and self.processed_items > 0:
+            # Використовуємо останні 5 елементів для аналізу
+            num_items_to_use = min(5, len(self.elapsed_times))
+            recent_times = self.elapsed_times[-num_items_to_use:]
+            
+            # Середній час на елемент (тільки обробка)
+            avg_processing_time = sum(recent_times) / len(recent_times)
+            print(f"DEBUG: Середній час на обробку елемента: {avg_processing_time:.2f} сек", file=sys.stderr)
+            print(f"DEBUG: Останні {len(recent_times)} виміри часу: {[round(t, 2) for t in recent_times]}", file=sys.stderr)
+            
+            # Якщо є дані про час очікування
+            if self.waiting_times:
+                avg_waiting_time = sum(self.waiting_times) / len(self.waiting_times)
+                print(f"DEBUG: Середній час очікування: {avg_waiting_time:.2f} сек", file=sys.stderr)
+            
+            # Застосування коефіцієнта безпеки
+            safety_factor = 1.0
+            if len(self.elapsed_times) < 5 or self.processed_items < self.total_items * 0.1:
+                if len(self.elapsed_times) == 1:
+                    safety_factor = 1.2
+                elif len(self.elapsed_times) < 3:
+                    safety_factor = 1.1
+                else:
+                    safety_factor = 1.05
+                
+                print(f"DEBUG: Застосовано коефіцієнт безпеки {safety_factor:.2f}x до часу обробки", file=sys.stderr)
+            
+            # Інформація про елементи, що залишились
+            remaining_items = self.total_items - self.processed_items
+            print(f"DEBUG: Залишилось елементів: {remaining_items}", file=sys.stderr)
+            
+            # Деталізація прогнозів з форматованим часом
+            if remaining_processing is not None:
+                print(f"DEBUG: Прогноз часу обробки: {format_time(remaining_processing)} ({remaining_processing:.2f} сек)", file=sys.stderr)
+                print(f"DEBUG: Прогноз часу очікування: {format_time(remaining_waiting)} ({remaining_waiting:.2f} сек)", file=sys.stderr)
+                print(f"DEBUG: Загальний прогноз часу: {format_time(remaining_total)} ({remaining_total:.2f} сек)", file=sys.stderr)
+        
+        # Формуємо рядок виводу для користувача
         info = f"Прогрес: {percentage:.1f}% ({self.processed_items}/{self.total_items})\n"
         info += f"Минуло: {format_time(elapsed)}"
         
-        if remaining is not None:
-            info += f" | Залишилось: {format_time(remaining)}"
-            info += f" | Всього: {format_time(total)}"
+        if remaining_total is not None:
+            # Додаємо примітку щодо точності прогнозу для перших елементів
+            accuracy_note = ""
+            if len(self.elapsed_times) == 1:
+                accuracy_note = " (дуже приблизно)"
+            elif len(self.elapsed_times) < 3:
+                accuracy_note = " (орієнтовно)"
+            
+            info += f" | Залишилось: {format_time(remaining_total)}{accuracy_note}"
+            info += f" | Всього: {format_time(total)}{accuracy_note}"
+            
+            # Додаємо додаткову діагностичну інформацію, якщо потрібно 
+            if debug_output and processing_time > 0 and waiting_time > 0:
+                processing_percentage = (processing_time / (processing_time + waiting_time)) * 100
+                total_processing_time = processing_time + remaining_processing if remaining_processing is not None else processing_time
+                total_waiting_time = waiting_time + remaining_waiting if remaining_waiting is not None else waiting_time
+                info += f"\nDEBUG: Час обробки: {format_time(total_processing_time)} ({processing_percentage:.1f}%) | Час очікування: {format_time(total_waiting_time)} ({100-processing_percentage:.1f}%)"
         
         return info
 
@@ -368,7 +500,7 @@ def run_mdx_query(connection, reporting_period):
         cursor.execute(query)
         
         # Запускаємо індикатор завантаження в окремому потоці
-        print_progress(f"Отримання даних з OLAP кубу...")
+        # Не виводимо дубльоване повідомлення, оскільки воно буде в анімованому індикаторі
         
         # Оцінка часу виконання запиту, використовуючи усереднене значення у 5 хвилин
         # Ви можете налаштувати це значення на основі ваших спостережень
@@ -683,7 +815,15 @@ try:
         if i > 0:
             print(f"\n{Fore.YELLOW}{'-' * 40}")
             print_info(f"Очікування {query_timeout} секунд перед наступним запитом...")
+            
+            # Починаємо відлік очікування
+            time_tracker.start_waiting()
+            
+            # Виконуємо зворотний відлік
             countdown_timer(query_timeout)
+            
+            # Завершуємо відлік очікування
+            time_tracker.end_waiting()
         
         reporting_period = f"{year}-{week:02d}"  # Формат РРРР-ТТ
         print(f"\n{Fore.CYAN}{'-' * 40}")
