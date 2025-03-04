@@ -1,9 +1,9 @@
-﻿# setup.ps1
-# Script for automating Python virtual environment setup and dependency installation
+﻿# setup_eng.ps1
+# Script for automating the creation of a Python virtual environment and installing dependencies
 # Author: Claude AI
 # Date: 2023
 
-# Function for colored text output
+# Function for displaying colored text
 function Write-ColorOutput {
     param (
         [string]$Message,
@@ -12,38 +12,38 @@ function Write-ColorOutput {
     Write-Host $Message -ForegroundColor $Color
 }
 
-# Set strict error handling
+# Setting strict error handling
 $ErrorActionPreference = "Stop"
 
 # Header
-Write-ColorOutput "===== OLAP Export Tool Virtual Environment Setup =====" "Cyan"
-Write-ColorOutput "This script will create a Python virtual environment and install all dependencies." "Yellow"
+Write-ColorOutput "===== Setting up virtual environment for OLAP Export Tool =====" "Cyan"
+Write-ColorOutput "This script will create a Python virtual environment and install all necessary dependencies." "Yellow"
 
-# Check Python presence with improved error handling
+# Check for Python with improved error handling
 try {
     $pythonVersion = python --version
     Write-ColorOutput "Found $pythonVersion" "Green"
 }
 catch {
-    Write-ColorOutput "Python not found or not properly configured. Please install Python 3.8 or newer." "Red"
+    Write-ColorOutput "Python not found or incorrectly configured. Please install Python 3.8 or newer." "Red"
     Write-ColorOutput "Error details: $_" "Red"
     exit 1
 }
 
-# Check if requirements.txt exists
+# Check for requirements.txt file
 if (-not (Test-Path -Path ".\requirements.txt")) {
     Write-ColorOutput "Error: requirements.txt file not found in the current directory." "Red"
-    Write-ColorOutput "Please make sure you're in the correct project directory or create a requirements.txt file." "Red"
+    Write-ColorOutput "Please make sure you are in the correct project directory or create a requirements.txt file." "Red"
     exit 1
 }
 
 # Check if virtual environment exists
 if (Test-Path -Path ".\venv") {
     Write-ColorOutput "Existing virtual environment detected." "Yellow"
-    $confirmation = Read-Host "Do you want to use the existing environment (Y), delete and create a new one (R), or cancel (N)? [Y/R/N]"
+    $confirmation = Read-Host "Do you want to use the existing environment (Y), delete and create a new one (R), or cancel the operation (N)? [Y/R/N]"
     
     if ($confirmation -eq "N") {
-        Write-ColorOutput "Operation canceled." "Red"
+        Write-ColorOutput "Operation cancelled." "Red"
         exit 0
     }
     elseif ($confirmation -eq "R") {
@@ -52,15 +52,15 @@ if (Test-Path -Path ".\venv") {
             # Make sure no processes are using the directory
             if (Get-Process | Where-Object { $_.Path -like "*\venv\*" }) {
                 Write-ColorOutput "Warning: Some processes are using files in the virtual environment." "Red"
-                Write-ColorOutput "Please close any applications using these files and try again." "Red"
+                Write-ColorOutput "Please close all programs that are using these files and try again." "Red"
                 exit 1
             }
             Remove-Item -Recurse -Force ".\venv"
             Write-ColorOutput "Old virtual environment deleted." "Green"
         }
         catch {
-            Write-ColorOutput "Error deleting the virtual environment: $_" "Red"
-            Write-ColorOutput "Please close any applications using these files and try again." "Red"
+            Write-ColorOutput "Error deleting virtual environment: $_" "Red"
+            Write-ColorOutput "Please close all programs that are using these files and try again." "Red"
             exit 1
         }
     }
@@ -77,7 +77,7 @@ if (Test-Path -Path ".\venv") {
                 
                 # Check if activation was successful
                 if (-not $env:VIRTUAL_ENV) {
-                    throw "Virtual environment activation failed"
+                    throw "Failed to activate virtual environment"
                 }
                 
                 Write-ColorOutput "Installing dependencies..." "Blue"
@@ -93,10 +93,10 @@ if (Test-Path -Path ".\venv") {
                 if (Get-Command deactivate -ErrorAction SilentlyContinue) {
                     deactivate
                 } else {
-                    # Alternative deactivation method if function is not available
+                    # Alternative method of deactivation if the function is not available
                     Write-ColorOutput "Note: Standard deactivate function not found, clearing environment variables..." "Yellow"
                     $env:VIRTUAL_ENV = $null
-                    # Remove the venv Scripts directory from PATH
+                    # Remove the Scripts directory of the virtual environment from PATH
                     $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notlike "*\venv\Scripts*" }) -join ';'
                 }
                 
@@ -108,13 +108,13 @@ if (Test-Path -Path ".\venv") {
             }
         }
         else {
-            Write-ColorOutput "Operation completed. To activate the environment, use: .\venv\Scripts\Activate.ps1" "Cyan"
+            Write-ColorOutput "Operation completed. To activate the environment use: .\venv\Scripts\Activate.ps1" "Cyan"
             exit 0
         }
     }
 }
 
-# Create virtual environment
+# Creating virtual environment
 Write-ColorOutput "Creating Python virtual environment..." "Blue"
 try {
     python -m venv venv
@@ -132,7 +132,7 @@ catch {
 
 Write-ColorOutput "Virtual environment successfully created!" "Green"
 
-# Activate virtual environment and install dependencies
+# Activating virtual environment and installing dependencies
 Write-ColorOutput "Activating virtual environment..." "Blue"
 try {
     # Activate the virtual environment
@@ -140,7 +140,7 @@ try {
     
     # Check if activation was successful
     if (-not $env:VIRTUAL_ENV) {
-        throw "Virtual environment activation failed"
+        throw "Failed to activate virtual environment"
     }
     
     # Install dependencies
@@ -168,17 +168,17 @@ if (-not (Test-Path -Path ".\.env")) {
         }
     }
     else {
-        Write-ColorOutput "Warning: .env and env.example files not found. You need to create the .env file manually." "Red"
+        Write-ColorOutput "Warning: .env and env.example files not found. You need to create an .env file manually." "Red"
     }
 }
 
-# Completion
-Write-ColorOutput "===== Setup Complete! =====" "Cyan"
+# Conclusion
+Write-ColorOutput "===== Setup completed! =====" "Cyan"
 Write-ColorOutput "Virtual environment created and activated." "Green"
 Write-ColorOutput "All dependencies installed." "Green"
 Write-ColorOutput "" "White"
-Write-ColorOutput "To activate the environment, use: .\venv\Scripts\Activate.ps1" "Yellow"
-Write-ColorOutput "To deactivate the environment, use the command: deactivate" "Yellow"
+Write-ColorOutput "To activate the environment use: .\venv\Scripts\Activate.ps1" "Yellow"
+Write-ColorOutput "To deactivate the environment use the command: deactivate" "Yellow"
 
 # Ask if the user wants to keep the environment activated
 $keepActive = Read-Host "Do you want to keep the virtual environment activated? [Y/N]"
@@ -188,14 +188,14 @@ if ($keepActive -ne "Y") {
     if (Get-Command deactivate -ErrorAction SilentlyContinue) {
         deactivate
     } else {
-        # Alternative deactivation method if function is not available
+        # Alternative method of deactivation if the function is not available
         Write-ColorOutput "Note: Standard deactivate function not found, clearing environment variables..." "Yellow"
         $env:VIRTUAL_ENV = $null
-        # Remove the venv Scripts directory from PATH
+        # Remove the Scripts directory of the virtual environment from PATH
         $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notlike "*\venv\Scripts*" }) -join ';'
     }
     Write-ColorOutput "Virtual environment deactivated." "Green"
 }
 else {
     Write-ColorOutput "Virtual environment remains activated." "Green"
-}
+} 
