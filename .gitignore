@@ -126,5 +126,4 @@ result/
 logs/
 .env*
 .idea/
-.vscode/
 *.xlsx 
