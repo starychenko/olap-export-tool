@@ -240,7 +240,7 @@ MDX-запити налаштовуються в файлі `olap.py` у фун�
 
 ```powershell
 # Клонуйте репозиторій
-git clone https://github.com/your-username/olap-export.git
+git clone https://github.com/starychenko/olap-export-tool.git
 cd olap-export
 
 # Запустіть скрипт налаштування
@@ -258,7 +258,7 @@ cd olap-export
 
 ```bash
 # Клонуйте репозиторій
-git clone https://github.com/your-username/olap-export.git
+git clone https://github.com/starychenko/olap-export-tool.git
 cd olap-export
 
 # Зробіть скрипт виконуваним та запустіть його
