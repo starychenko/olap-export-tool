@@ -216,7 +216,7 @@ class TimeTracker:
         percentage = self.get_percentage_complete()
         
         # Розрахунок діагностичних значень для виводу
-        debug_output = True  # Змінна для керування дебаг-виводом
+        debug_output = os.getenv('DEBUG', 'false').lower() in ('true', '1', 'yes')  # Контроль через змінну середовища
         if debug_output and self.elapsed_times and self.processed_items > 0:
             # Використовуємо останні 5 елементів для аналізу
             num_items_to_use = min(5, len(self.elapsed_times))
