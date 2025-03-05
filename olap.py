@@ -11,6 +11,13 @@ from colorama import init, Fore, Back, Style
 import threading
 import itertools
 
+# Імпорт для COM-інтерфейсу ADO (OLE DB)
+try:
+    import win32com.client
+    HAS_PYWIN32 = True
+except ImportError:
+    HAS_PYWIN32 = False
+
 # Ініціалізуємо colorama для кольорового виводу в консоль
 init(autoreset=True)
 
@@ -504,14 +511,156 @@ def get_connection_string():
     
     return connection_string, auth_details
 
+# Функція для підключення через ADO (OLE DB) з використанням pywin32
+def connect_using_ado(connection_string, auth_details):
+    """
+    Підключається до OLAP сервера через ADO (OLE DB) за допомогою pywin32
+    
+    Args:
+        connection_string (str): Рядок підключення до OLAP серверу
+        auth_details (dict): Словник з деталями автентифікації
+        
+    Returns:
+        tuple: (connection, cursor) - ADO з'єднання та курсор для запитів
+        
+    Notes:
+        Використовує pywin32 для створення COM-об'єкта ADODB.Connection.
+        Цей метод дозволяє надійно використовувати автентифікацію за логіном/паролем.
+    """
+    if not HAS_PYWIN32:
+        print_error("Бібліотека pywin32 не знайдена. Встановіть її командою: pip install pywin32")
+        return None, None
+    
+    try:
+        print_info_detail(f"Підключення до OLAP сервера {os.getenv('OLAP_SERVER')} через ADO...", auth_details)
+        
+        # Створюємо COM-об'єкт для ADO підключення
+        connection = win32com.client.Dispatch(r'ADODB.Connection')
+        connection.Open(connection_string)
+        
+        # Створюємо COM-об'єкт для команд
+        command = win32com.client.Dispatch(r'ADODB.Command')
+        command.ActiveConnection = connection
+        
+        # Створюємо обгортку-курсор для сумісності з іншим кодом
+        cursor = AdoCursor(command)
+        
+        print_success(f"Підключення до OLAP сервера через ADO успішно встановлено")
+        return connection, cursor
+    except Exception as e:
+        print_tech_error(f"Помилка підключення до OLAP сервера через ADO", e)
+        
+        # Додаткова інформація про можливі причини помилки
+        if "Login failed" in str(e) or "логін" in str(e).lower():
+            print_warning("Можлива причина: Неправильний логін або пароль")
+            print_info("Рекомендація: Перевірте значення OLAP_USER та OLAP_PASSWORD у файлі .env")
+        elif "provider" in str(e).lower():
+            print_warning("Можлива причина: Проблеми з провайдером MSOLAP")
+            print_info("Рекомендації:")
+            print(f"   {Fore.CYAN}1. Перевірте наявність встановленого SQL Server або Analysis Services")
+            print(f"   {Fore.CYAN}2. Перевірте версію провайдера MSOLAP")
+        
+        return None, None
+
+# Клас-обгортка для забезпечення сумісності ADO з іншим кодом
+class AdoCursor:
+    """
+    Клас-обгортка для ADO команди, щоб забезпечити спільний інтерфейс з pyadomd
+    """
+    def __init__(self, command):
+        self.command = command
+        self.rows = None
+        self.columns = None
+    
+    def execute(self, query):
+        """Виконує MDX запит"""
+        self.command.CommandText = query
+        self.command.CommandType = 1  # adCmdText
+        self.recordset = self.command.Execute()[0]
+    
+    def fetchall(self):
+        """Отримує всі результати запиту"""
+        if not self.recordset:
+            return []
+        
+        # Отримуємо поля (стовпці)
+        fields = {}
+        for i in range(self.recordset.Fields.Count):
+            field = self.recordset.Fields(i)
+            fields[i] = field.Name
+        
+        self.columns = list(fields.values())
+        
+        # Отримуємо всі рядки
+        rows = []
+        if not self.recordset.EOF:
+            self.recordset.MoveFirst()
+            while not self.recordset.EOF:
+                row = []
+                for i in range(self.recordset.Fields.Count):
+                    row.append(self.recordset.Fields(i).Value)
+                rows.append(row)
+                self.recordset.MoveNext()
+        
+        self.rows = rows
+        return rows
+    
+    def fetchone(self):
+        """Отримує один рядок результатів"""
+        if not self.recordset or self.recordset.EOF:
+            return None
+        
+        row = []
+        for i in range(self.recordset.Fields.Count):
+            row.append(self.recordset.Fields(i).Value)
+        
+        self.recordset.MoveNext()
+        return row
+    
+    def get_column_names(self):
+        """Повертає імена стовпців"""
+        if not self.columns:
+            return []
+        return self.columns
+
 # Функція для підключення до OLAP сервера
 def connect_to_olap(connection_string=None, auth_details=None):
     """Підключається до OLAP сервера і повертає з'єднання"""
     if connection_string is None:
         connection_string, auth_details = get_connection_string()
     
+    # Визначаємо метод автентифікації
+    auth_method = os.getenv('OLAP_AUTH_METHOD', AUTH_SSPI).upper()
+    
     try:
-        print_info_detail(f"Підключення до OLAP сервера {os.getenv('OLAP_SERVER')}...", auth_details)
+        # Якщо використовується LOGIN автентифікація - використовуємо ADO через pywin32
+        # Якщо використовується SSPI автентифікація - використовуємо ADOMD.NET
+        if auth_method == AUTH_LOGIN and os.getenv('OLAP_USER') and os.getenv('OLAP_PASSWORD'):
+            # Перевіряємо, чи встановлено pywin32
+            if not HAS_PYWIN32:
+                print_warning("Обрано автентифікацію за логіном/паролем (LOGIN), але бібліотека pywin32 не встановлена.")
+                print_info("Рекомендація: Встановіть pywin32 командою: pip install pywin32")
+                print_warning("Буде використано ADOMD.NET, але автентифікація за логіном/паролем може не спрацювати")
+            else:
+                # Використовуємо ADO через pywin32
+                print_info(f"Використовуємо підключення через ADO (OLE DB) для автентифікації за логіном/паролем")
+                ado_connection, cursor = connect_using_ado(connection_string, auth_details)
+                
+                if ado_connection:
+                    # Створюємо обгортку для сумісності з іншими функціями
+                    connection_wrapper = type('ADOConnectionWrapper', (), {
+                        'cursor': lambda self: cursor,
+                        'close': lambda self: ado_connection.Close(),
+                        '_ado_connection': ado_connection  # Зберігаємо посилання на оригінальне підключення
+                    })
+                    return connection_wrapper()
+                
+                # Якщо ADO підключення не вдалося, повідомляємо про помилку
+                print_error("Не вдалося встановити ADO підключення. Перевірте параметри підключення.")
+                print_warning("Спробуємо використати ADOMD.NET, але автентифікація за логіном/паролем може не спрацювати.")
+        
+        # В інших випадках використовуємо ADOMD.NET (працює добре для Windows-автентифікації)
+        print_info_detail(f"Підключення до OLAP сервера {os.getenv('OLAP_SERVER')} через ADOMD.NET...", auth_details)
         
         # Інформація про версію провайдера та шлях до DLL
         print_info(f"Шлях до ADOMD.NET: {adomd_dll_path}")
@@ -539,11 +688,14 @@ def connect_to_olap(connection_string=None, auth_details=None):
             print_warning("Можлива причина: Неправильний логін або пароль")
             print_info("Рекомендація: Перевірте значення OLAP_USER та OLAP_PASSWORD у файлі .env")
         elif "provider" in str(e).lower():
-            print_warning("Можлива причина: Проблеми з ADOMD.NET провайдером")
+            print_warning("Можлива причина: Проблеми з провайдером")
             print_info("Рекомендації:")
-            print(f"   {Fore.CYAN}1. Перевірте шлях до ADOMD.NET у змінній ADOMD_DLL_PATH у файлі .env")
-            print(f"   {Fore.CYAN}2. Встановіть або перевстановіть Microsoft SQL Server Management Studio")
-            print(f"   {Fore.CYAN}3. Перевірте версію Microsoft.AnalysisServices.AdomdClient.dll")
+            if "ADOMD" in str(e):
+                print(f"   {Fore.CYAN}1. Перевірте шлях до ADOMD.NET у змінній ADOMD_DLL_PATH у файлі .env")
+                print(f"   {Fore.CYAN}2. Встановіть або перевстановіть Microsoft SQL Server Management Studio")
+            else:
+                print(f"   {Fore.CYAN}1. Перевірте наявність встановленого SQL Server або Analysis Services")
+                print(f"   {Fore.CYAN}2. Спробуйте інший метод автентифікації")
         elif "Data Source" in str(e) or "сервер" in str(e).lower():
             print_warning("Можлива причина: Неправильна адреса сервера або сервер недоступний")
             print_info("Рекомендації:")
@@ -553,8 +705,10 @@ def connect_to_olap(connection_string=None, auth_details=None):
         elif "SSPI" in str(e):
             print_warning("Можлива причина: Проблеми з Windows-автентифікацією")
             print_info("Рекомендації:")
-            print(f"   {Fore.CYAN}1. Спробуйте використати автентифікацію за логіном/паролем (OLAP_AUTH_METHOD=LOGIN)")
-            print(f"   {Fore.CYAN}2. Перевірте, чи має ваш користувач {get_current_windows_user()} доступ до OLAP-кубу")
+            if not HAS_PYWIN32:
+                print(f"   {Fore.CYAN}1. Встановіть pywin32 для використання автентифікації за логіном/паролем: pip install pywin32")
+            print(f"   {Fore.CYAN}2. Змініть метод автентифікації на LOGIN та вкажіть логін і пароль у файлі .env")
+            print(f"   {Fore.CYAN}3. Перевірте, чи має ваш користувач {get_current_windows_user()} доступ до OLAP-кубу")
             
         # Вивід технічних деталей для відладки
         print_info("Технічні деталі для відладки:")
@@ -967,7 +1121,10 @@ try:
         print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Windows (SSPI) як користувач {get_current_windows_user()}")
     elif auth_method == AUTH_LOGIN:
         user = os.getenv('OLAP_USER')
-        print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Логін/пароль як користувач {user}")
+        if HAS_PYWIN32:
+            print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Логін/пароль як користувач {user} через ADO (OLE DB)")
+        else: 
+            print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Логін/пароль як користувач {user} через ADOMD.NET (потрібен pywin32)")
     else:
         print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Невідомий метод ({auth_method})")
     
