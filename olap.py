@@ -1336,7 +1336,8 @@ try:
     print_header(f"ПІДСУМОК ОБРОБКИ")
     # Детальна інформація про час виконання
     if len(year_week_pairs) > 1:
-        avg_time_per_week = processing_time / len(year_week_pairs)
+        # Змінюємо обчислення середнього часу на основі elapsed_times
+        avg_time_per_week = sum(time_tracker.elapsed_times) / len(time_tracker.elapsed_times) if time_tracker.elapsed_times else 0
         print_info(f"Деталі часу виконання:")
         print(f"   {Fore.CYAN}Загальний час:    {Fore.WHITE}{format_time(processing_time)}")
         print(f"   {Fore.CYAN}Середній час: {Fore.WHITE}{format_time(avg_time_per_week)}")
