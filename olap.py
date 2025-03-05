@@ -14,6 +14,7 @@ from colorama import init, Fore, Back, Style
 from dotenv import load_dotenv
 import clr
 import math
+import csv
 
 # Ініціалізуємо colorama для кольорового виводу в консоль
 init(autoreset=True)
@@ -997,73 +998,149 @@ def run_mdx_query(connection, reporting_period):
             # Застосовуємо нові назви стовпців
             df.rename(columns=renamed_columns, inplace=True)
             
-            # Експортуємо дані у Excel-файл з форматуванням
-            print_progress(f"Експорт даних у Excel-файл {filepath}...")
+            # Визначаємо формат експорту з .env
+            export_format = os.getenv('EXPORT_FORMAT', 'XLSX').upper()
             
-            # Створюємо Excel-файл за допомогою XlsxWriter
-            workbook = xlsxwriter.Workbook(filepath)
-            worksheet = workbook.add_worksheet(f"{year_num}-{week_num:02d}")
+            # Перевіряємо, що формат правильний (XLSX, CSV або BOTH)
+            if export_format not in ['XLSX', 'CSV', 'BOTH']:
+                print_warning(f"Невідомий формат експорту: {export_format}. Використовуємо XLSX.")
+                export_format = 'XLSX'
             
-            # Налаштування стилів для заголовків з .env (залишаємо тільки заголовки)
-            header_format = workbook.add_format({
-                'bold': True,
-                'font_name': 'Arial',
-                'font_size': int(os.getenv('EXCEL_HEADER_FONT_SIZE', 11)),
-                'font_color': os.getenv('EXCEL_HEADER_FONT_COLOR', 'FFFFFF'),
-                'bg_color': os.getenv('EXCEL_HEADER_COLOR', '00365E'),
-                'align': 'center',
-                'valign': 'vcenter',
-                'text_wrap': True,
-                'border': 1
-            })
+            # Визначаємо які формати експортувати
+            export_xlsx = export_format in ['XLSX', 'BOTH']
+            export_csv = export_format in ['CSV', 'BOTH']
             
-            # Додаємо заголовки
-            for col_num, column_name in enumerate(df.columns):
-                worksheet.write(0, col_num, column_name, header_format)
+            # Функція для експорту в XLSX
+            def export_to_xlsx(file_path):
+                print_progress(f"Експорт даних у Excel-файл {file_path}...")
+                
+                # Створюємо Excel-файл за допомогою XlsxWriter
+                workbook = xlsxwriter.Workbook(file_path)
+                worksheet = workbook.add_worksheet(f"{year_num}-{week_num:02d}")
+                
+                # Налаштування стилів для заголовків з .env (залишаємо тільки заголовки)
+                header_format = workbook.add_format({
+                    'bold': True,
+                    'font_name': 'Arial',
+                    'font_size': int(os.getenv('EXCEL_HEADER_FONT_SIZE', 11)),
+                    'font_color': os.getenv('EXCEL_HEADER_FONT_COLOR', 'FFFFFF'),
+                    'bg_color': os.getenv('EXCEL_HEADER_COLOR', '00365E'),
+                    'align': 'center',
+                    'valign': 'vcenter',
+                    'text_wrap': True,
+                    'border': 1
+                })
+                
+                # Додаємо заголовки
+                for col_num, column_name in enumerate(df.columns):
+                    worksheet.write(0, col_num, column_name, header_format)
+                
+                # Додаємо дані без форматування
+                for row_num, row_data in enumerate(df.values):
+                    for col_num, cell_value in enumerate(row_data):
+                        # Додаткова перевірка на .NET типи (це зберігаємо для сумісності)
+                        if "System." in str(type(cell_value)):
+                            cell_value = convert_dotnet_to_python(cell_value)
+                        
+                        # Перевіряємо на NaN/Infinity для чисел з рухомою комою
+                        if isinstance(cell_value, float):
+                            if math.isnan(cell_value) or math.isinf(cell_value):
+                                cell_value = None  # Замінюємо на None (буде пуста клітинка)
+                        
+                        # Записуємо значення без форматування
+                        worksheet.write(row_num + 1, col_num, cell_value)
+                
+                # Автоматичне налаштування ширини стовпців
+                for col_num, column in enumerate(df.columns):
+                    # Знаходимо максимальну довжину
+                    max_length = max(
+                        len(str(column)),
+                        df.iloc[:, col_num].astype(str).str.len().max() if len(df) > 0 else 0
+                    )
+                    # Встановлюємо ширину з невеликим запасом
+                    column_width = min(max_length + 2, 100)  # Обмежуємо максимальну ширину
+                    worksheet.set_column(col_num, col_num, column_width)
+                
+                # Фіксуємо перший рядок (заголовки)
+                worksheet.freeze_panes(1, 0)
+                
+                # Зберігаємо файл
+                workbook.close()
+                return os.path.getsize(file_path)
             
-            # Додаємо дані без форматування
-            for row_num, row_data in enumerate(df.values):
-                for col_num, cell_value in enumerate(row_data):
-                    # Додаткова перевірка на .NET типи (це зберігаємо для сумісності)
-                    if "System." in str(type(cell_value)):
-                        cell_value = convert_dotnet_to_python(cell_value)
+            # Функція для експорту в CSV
+            def export_to_csv(file_path):
+                print_progress(f"Експорт даних у CSV-файл {file_path}...")
+                
+                # Отримуємо налаштування CSV з .env
+                delimiter = os.getenv('CSV_DELIMITER', ';')
+                encoding = os.getenv('CSV_ENCODING', 'utf-8-sig')  # з BOM для коректного відображення кирилиці в Excel
+                quoting = csv.QUOTE_ALL if os.getenv('CSV_QUOTING', 'true').lower() == 'true' else csv.QUOTE_MINIMAL
+                decimal = os.getenv('CSV_DECIMAL', ',')
+                
+                # Якщо вибрано кому як десятковий роздільник і дані містять числа з плаваючою точкою,
+                # замінюємо точки на коми для коректного відображення в CSV
+                if decimal == ',':
+                    # Створюємо копію DataFrame щоб не змінювати оригінальний
+                    df_csv = df.copy()
                     
-                    # Перевіряємо на NaN/Infinity для чисел з рухомою комою
-                    if isinstance(cell_value, float):
-                        if math.isnan(cell_value) or math.isinf(cell_value):
-                            cell_value = None  # Замінюємо на None (буде пуста клітинка)
+                    # Замінюємо NaN/Infinity на None перед експортом
+                    df_csv = df_csv.replace([np.inf, -np.inf], None)
+                    df_csv = df_csv.fillna('')
                     
-                    # Записуємо значення без форматування
-                    worksheet.write(row_num + 1, col_num, cell_value)
+                    # Для всіх числових колонок замінюємо точку на кому
+                    for col in df_csv.select_dtypes(include=['float', 'float64']).columns:
+                        df_csv[col] = df_csv[col].apply(lambda x: str(x).replace('.', ',') if x != '' else '')
+                    
+                    # Експортуємо з заданими налаштуваннями
+                    df_csv.to_csv(file_path, sep=delimiter, encoding=encoding, 
+                              index=False, quoting=quoting)
+                else:
+                    # Замінюємо NaN/Infinity на None перед експортом
+                    df_csv = df.replace([np.inf, -np.inf], None)
+                    df_csv = df_csv.fillna('')
+                    
+                    # Експортуємо з заданими налаштуваннями
+                    df_csv.to_csv(file_path, sep=delimiter, encoding=encoding, 
+                              index=False, quoting=quoting, decimal=decimal)
+                
+                return os.path.getsize(file_path)
             
-            # Автоматичне налаштування ширини стовпців
-            for col_num, column in enumerate(df.columns):
-                # Знаходимо максимальну довжину
-                max_length = max(
-                    len(str(column)),
-                    df.iloc[:, col_num].astype(str).str.len().max() if len(df) > 0 else 0
-                )
-                # Обмежуємо максимальну ширину
-                adjusted_width = min(max_length + 2, 50)
-                worksheet.set_column(col_num, col_num, adjusted_width)
+            # Експортуємо дані у вибрані формати
+            exported_files = []
             
-            # Закріплюємо верхній рядок
-            worksheet.freeze_panes(1, 0)
+            # Використовуємо той самий шлях, що визначений на початку функції
+            # Формуємо результуючу директорію
+            result_dir = "result"
+            year_dir = os.path.join(result_dir, str(year_num))
             
-            # Закриваємо книгу для збереження змін
-            workbook.close()
+            # Перевіряємо і створюємо папку для року, якщо вона не існує
+            if not os.path.exists(year_dir):
+                os.makedirs(year_dir)
+                print_info(f"Створено директорію '{year_dir}'")
             
-            # Отримуємо розмір файлу та форматуємо його для виведення
-            file_size_bytes = os.path.getsize(filepath)
-            if file_size_bytes < 1024 * 1024:  # Менше 1 МБ
-                file_size = f"{file_size_bytes / 1024:.1f} КБ"
-            else:  # Більше або рівно 1 МБ
-                file_size = f"{file_size_bytes / (1024 * 1024):.2f} МБ"
+            if export_xlsx:
+                xlsx_path = os.path.join(year_dir, f"{year_num}-{week_num:02d}.xlsx")
+                xlsx_size = export_to_xlsx(xlsx_path)
+                exported_files.append((xlsx_path, xlsx_size))
             
-            print_success(f"Дані експортовано у файл: {Fore.WHITE}{filepath} {Fore.YELLOW}({file_size}, {len(df)} рядків)")
+            if export_csv:
+                csv_path = os.path.join(year_dir, f"{year_num}-{week_num:02d}.csv")
+                csv_size = export_to_csv(csv_path)
+                exported_files.append((csv_path, csv_size))
             
-            # Повертаємо шлях до файлу для підтвердження успішного створення
-            return filepath
+            # Виводимо інформацію про експортовані файли
+            for filepath, file_size_bytes in exported_files:
+                # Форматуємо розмір файлу для відображення
+                if file_size_bytes < 1024 * 1024:  # Менше 1 МБ
+                    file_size = f"{file_size_bytes / 1024:.1f} КБ"
+                else:  # Більше або рівно 1 МБ
+                    file_size = f"{file_size_bytes / (1024 * 1024):.2f} МБ"
+                
+                print_success(f"Дані експортовано у файл: {Fore.WHITE}{filepath} {Fore.YELLOW}({file_size}, {len(df)} рядків)")
+            
+            # Повертаємо шлях до першого експортованого файлу (для сумісності)
+            return exported_files[0][0] if exported_files else None
             
         except Exception as e:
             # Зупиняємо анімацію при помилці
