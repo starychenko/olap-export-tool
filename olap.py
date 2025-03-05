@@ -21,6 +21,10 @@ load_dotenv()
 animation_running = False
 avg_query_time = None  # Середній час виконання запиту (ініціалізується при першому вимірі)
 
+# Константи для методів автентифікації
+AUTH_SSPI = "SSPI"
+AUTH_LOGIN = "LOGIN"
+
 # Додаємо шлях до Microsoft.AnalysisServices.AdomdClient.dll з .env
 adomd_dll_path = os.getenv('ADOMD_DLL_PATH')
 sys.path.append(adomd_dll_path)
@@ -43,6 +47,53 @@ def print_header(text):
     print(f"{Fore.CYAN}{Style.BRIGHT}== {text}")
     print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 80}")
     print() # Додаємо порожній рядок для кращої читабельності
+
+# Функція для виводу інформаційних повідомлень з деталями
+def print_info_detail(text, details=None):
+    """
+    Виводить інформаційне повідомлення з додатковими деталями
+    
+    Args:
+        text (str): Основне повідомлення
+        details (dict, optional): Словник з деталями у форматі ключ-значення
+    """
+    print(f"{Fore.GREEN}[{get_current_time()}] ℹ️ {text}")
+    
+    if details:
+        for key, value in details.items():
+            # Якщо значення є паролем, приховуємо його
+            if 'password' in key.lower() or 'пароль' in key.lower():
+                value = '********'
+            print(f"   {Fore.CYAN}{key}: {Fore.WHITE}{value}")
+
+# Функція для виводу детальної технічної помилки
+def print_tech_error(text, error_obj=None):
+    """
+    Виводить технічну помилку з детальною інформацією
+    
+    Args:
+        text (str): Основне повідомлення про помилку
+        error_obj (Exception, optional): Об'єкт виключення для виводу деталей
+    """
+    print(f"{Fore.RED}[{get_current_time()}] 🛑 {text}")
+    
+    if error_obj:
+        error_type = type(error_obj).__name__
+        error_message = str(error_obj)
+        
+        print(f"   {Fore.RED}Тип помилки: {Fore.WHITE}{error_type}")
+        print(f"   {Fore.RED}Повідомлення: {Fore.WHITE}{error_message}")
+        
+        # Якщо є traceback, виводимо останні 3 рядки стеку викликів
+        if hasattr(error_obj, '__traceback__') and error_obj.__traceback__:
+            import traceback
+            tb_lines = traceback.format_tb(error_obj.__traceback__)
+            if len(tb_lines) > 3:
+                tb_lines = tb_lines[-3:]  # Останні 3 рядки
+            
+            print(f"   {Fore.RED}Стек викликів:")
+            for line in tb_lines:
+                print(f"   {Fore.YELLOW}{line.strip()}")
 
 # Функція для виводу інформаційних повідомлень
 def print_info(text):
@@ -367,27 +418,112 @@ def generate_year_week_pairs(start_period, end_period, available_weeks):
 # Функція для отримання рядка підключення до OLAP
 def get_connection_string():
     """Повертає рядок підключення до OLAP сервера на основі налаштувань з .env"""
-    return (
-        "Provider=MSOLAP;"
-        f"Data Source={os.getenv('OLAP_SERVER')};" 
-        f"Initial Catalog={os.getenv('OLAP_DATABASE')};" 
-        "Integrated Security=SSPI;"
-    )
+    # Читаємо базові параметри
+    server = os.getenv('OLAP_SERVER')
+    database = os.getenv('OLAP_DATABASE')
+    
+    # Читаємо метод автентифікації з .env
+    auth_method = os.getenv('OLAP_AUTH_METHOD', AUTH_SSPI).upper()  # За замовчуванням SSPI
+    
+    # Формуємо базову частину рядка підключення
+    connection_string = f"Provider=MSOLAP;Data Source={server};Initial Catalog={database};"
+    
+    # Додаємо параметри автентифікації
+    if auth_method == AUTH_SSPI:
+        # Windows-автентифікація
+        connection_string += "Integrated Security=SSPI;"
+        auth_details = {
+            "Метод автентифікації": "Windows-автентифікація (SSPI)",
+            "Поточний користувач": os.getenv('USERNAME')
+        }
+    elif auth_method == AUTH_LOGIN:
+        # Автентифікація за логіном/паролем
+        user = os.getenv('OLAP_USER')
+        password = os.getenv('OLAP_PASSWORD')
+        
+        if not user or not password:
+            print_warning("Обрано автентифікацію за логіном/паролем, але дані не вказані. Використовуємо SSPI.")
+            connection_string += "Integrated Security=SSPI;"
+            auth_details = {
+                "Метод автентифікації": "Windows-автентифікація (SSPI) - автоматично",
+                "Поточний користувач": os.getenv('USERNAME'),
+                "Причина": "Логін або пароль не вказані"
+            }
+        else:
+            connection_string += f"User ID={user};Password={password};Persist Security Info=True;Update Isolation Level=2;"
+            auth_details = {
+                "Метод автентифікації": "Логін/пароль",
+                "Користувач": user,
+                "Пароль": password  # Буде приховано у виводі
+            }
+    else:
+        # Невідомий метод автентифікації, використовуємо SSPI
+        print_warning(f"Невідомий метод автентифікації '{auth_method}'. Використовуємо SSPI.")
+        connection_string += "Integrated Security=SSPI;"
+        auth_details = {
+            "Метод автентифікації": "Windows-автентифікація (SSPI) - автоматично",
+            "Поточний користувач": os.getenv('USERNAME'),
+            "Причина": f"Невідомий метод автентифікації: {auth_method}"
+        }
+    
+    return connection_string, auth_details
 
 # Функція для підключення до OLAP сервера
-def connect_to_olap(connection_string=None):
+def connect_to_olap(connection_string=None, auth_details=None):
     """Підключається до OLAP сервера і повертає з'єднання"""
     if connection_string is None:
-        connection_string = get_connection_string()
+        connection_string, auth_details = get_connection_string()
     
     try:
-        print_info(f"Підключення до OLAP сервера {os.getenv('OLAP_SERVER')}...")
+        print_info_detail(f"Підключення до OLAP сервера {os.getenv('OLAP_SERVER')}...", auth_details)
+        
+        # Інформація про версію провайдера та шлях до DLL
+        print_info(f"Шлях до ADOMD.NET: {adomd_dll_path}")
+        dll_exists = os.path.exists(adomd_dll_path)
+        if not dll_exists:
+            print_warning("Шлях до ADOMD.NET не знайдено! Перевірте налаштування ADOMD_DLL_PATH у файлі .env")
+        else:
+            dll_files = [f for f in os.listdir(adomd_dll_path) if f.lower().endswith('.dll')]
+            adomd_files = [f for f in dll_files if 'adomd' in f.lower()]
+            if adomd_files:
+                print_info(f"Знайдено ADOMD.NET файли: {', '.join(adomd_files)}")
+            else:
+                print_warning("У вказаному каталозі не знайдено файлів ADOMD.NET!")
+                
         connection = Pyadomd(connection_string)
         connection.open()
-        print_success(f"Підключення до OLAP сервера встановлено")
+        
+        print_success(f"Підключення до OLAP сервера успішно встановлено")
         return connection
     except Exception as e:
-        print_error(f"Помилка підключення до OLAP сервера: {e}")
+        print_tech_error(f"Помилка підключення до OLAP сервера", e)
+        
+        # Додаткова інформація про можливі причини помилки
+        if "Login failed" in str(e) or "логін" in str(e).lower():
+            print_warning("Можлива причина: Неправильний логін або пароль")
+            print_info("Рекомендація: Перевірте значення OLAP_USER та OLAP_PASSWORD у файлі .env")
+        elif "provider" in str(e).lower():
+            print_warning("Можлива причина: Проблеми з ADOMD.NET провайдером")
+            print_info("Рекомендації:")
+            print(f"   {Fore.CYAN}1. Перевірте шлях до ADOMD.NET у змінній ADOMD_DLL_PATH у файлі .env")
+            print(f"   {Fore.CYAN}2. Встановіть або перевстановіть Microsoft SQL Server Management Studio")
+            print(f"   {Fore.CYAN}3. Перевірте версію Microsoft.AnalysisServices.AdomdClient.dll")
+        elif "Data Source" in str(e) or "сервер" in str(e).lower():
+            print_warning("Можлива причина: Неправильна адреса сервера або сервер недоступний")
+            print_info("Рекомендації:")
+            print(f"   {Fore.CYAN}1. Перевірте значення OLAP_SERVER у файлі .env")
+            print(f"   {Fore.CYAN}2. Перевірте, чи доступний сервер {os.getenv('OLAP_SERVER')} з вашої мережі")
+            print(f"   {Fore.CYAN}3. Спробуйте виконати ping {os.getenv('OLAP_SERVER')}")
+        elif "SSPI" in str(e):
+            print_warning("Можлива причина: Проблеми з Windows-автентифікацією")
+            print_info("Рекомендації:")
+            print(f"   {Fore.CYAN}1. Спробуйте використати автентифікацію за логіном/паролем (OLAP_AUTH_METHOD=LOGIN)")
+            print(f"   {Fore.CYAN}2. Перевірте, чи має ваш користувач {os.getenv('USERNAME')} доступ до OLAP-кубу")
+            
+        # Вивід технічних деталей для відладки
+        print_info("Технічні деталі для відладки:")
+        print(f"   {Fore.CYAN}Рядок підключення: {Fore.WHITE}{connection_string.replace(os.getenv('OLAP_PASSWORD', ''), '********') if os.getenv('OLAP_PASSWORD') else connection_string}")
+        
         return None
 
 # Функція для виконання MDX-запиту і отримання результатів
@@ -739,8 +875,8 @@ try:
     end_period = os.getenv('YEAR_WEEK_END')
     
     # Ініціалізація підключення до OLAP
-    connection_string = get_connection_string()
-    connection = connect_to_olap(connection_string)
+    connection_string, auth_details = get_connection_string()
+    connection = connect_to_olap(connection_string, auth_details)
     if not connection:
         print_error("Не вдалося підключитися до OLAP. Програма завершує роботу.")
         sys.exit(1)
@@ -788,6 +924,16 @@ try:
     print(f"   {Fore.CYAN}OLAP сервер:  {Fore.WHITE}{os.getenv('OLAP_SERVER')}")
     print(f"   {Fore.CYAN}База даних:   {Fore.WHITE}{os.getenv('OLAP_DATABASE')}")
     print(f"   {Fore.CYAN}Фільтр:       {Fore.WHITE}{filter_fg1_name}")
+    
+    # Додаємо інформацію про метод автентифікації
+    auth_method = os.getenv('OLAP_AUTH_METHOD', AUTH_SSPI).upper()
+    if auth_method == AUTH_SSPI:
+        print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Windows (SSPI) як користувач {os.getenv('USERNAME')}")
+    elif auth_method == AUTH_LOGIN:
+        user = os.getenv('OLAP_USER')
+        print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Логін/пароль як користувач {user}")
+    else:
+        print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Невідомий метод ({auth_method})")
     
     # Виводимо інформацію про періоди
     if start_period and end_period:
