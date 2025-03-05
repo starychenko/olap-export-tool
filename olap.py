@@ -33,6 +33,30 @@ clr.AddReference('Microsoft.AnalysisServices.AdomdClient')
 from pyadomd import Pyadomd
 import pandas as pd
 
+# Функція для отримання імені поточного користувача Windows
+def get_current_windows_user():
+    """
+    Повертає ім'я поточного користувача Windows.
+    
+    Функція використовує декілька методів для надійного визначення реального користувача,
+    від імені якого виконується Windows-автентифікація (SSPI).
+    
+    Returns:
+        str: Ім'я поточного користувача Windows
+        
+    Notes:
+        1. Спочатку використовується os.getlogin(), який визначає користувача за поточною сесією.
+        2. Якщо цей метод не вдається (наприклад, при запуску в деяких контейнерах або через 
+           планувальник завдань), використовується системна змінна середовища USERNAME.
+        3. У випадку, якщо і USERNAME не визначено, повертається 'Невідомий користувач'.
+    """
+    try:
+        current_user = os.getlogin()
+    except Exception:
+        # Запасний варіант, якщо getlogin() не спрацює
+        current_user = os.getenv('USERNAME', 'Невідомий користувач')
+    return current_user
+
 # Визначаємо поточний рік та тиждень для значень за замовчуванням
 CURRENT_YEAR = datetime.datetime.now().year
 CURRENT_WEEK = datetime.datetime.now().isocalendar()[1]  # Поточний номер тижня
@@ -417,7 +441,19 @@ def generate_year_week_pairs(start_period, end_period, available_weeks):
 
 # Функція для отримання рядка підключення до OLAP
 def get_connection_string():
-    """Повертає рядок підключення до OLAP сервера на основі налаштувань з .env"""
+    """
+    Повертає рядок підключення до OLAP сервера на основі налаштувань з .env
+    
+    Returns:
+        tuple: (connection_string, auth_details)
+            - connection_string (str): Рядок підключення до OLAP серверу
+            - auth_details (dict): Словник з деталями автентифікації
+    
+    Notes:
+        При Windows-автентифікації (SSPI) ім'я поточного користувача визначається 
+        за допомогою функції get_current_windows_user(), яка використовує 
+        os.getlogin() та запасний варіант os.getenv('USERNAME').
+    """
     # Читаємо базові параметри
     server = os.getenv('OLAP_SERVER')
     database = os.getenv('OLAP_DATABASE')
@@ -434,7 +470,7 @@ def get_connection_string():
         connection_string += "Integrated Security=SSPI;"
         auth_details = {
             "Метод автентифікації": "Windows-автентифікація (SSPI)",
-            "Поточний користувач": os.getenv('USERNAME')
+            "Поточний користувач": get_current_windows_user()
         }
     elif auth_method == AUTH_LOGIN:
         # Автентифікація за логіном/паролем
@@ -446,7 +482,7 @@ def get_connection_string():
             connection_string += "Integrated Security=SSPI;"
             auth_details = {
                 "Метод автентифікації": "Windows-автентифікація (SSPI) - автоматично",
-                "Поточний користувач": os.getenv('USERNAME'),
+                "Поточний користувач": get_current_windows_user(),
                 "Причина": "Логін або пароль не вказані"
             }
         else:
@@ -462,7 +498,7 @@ def get_connection_string():
         connection_string += "Integrated Security=SSPI;"
         auth_details = {
             "Метод автентифікації": "Windows-автентифікація (SSPI) - автоматично",
-            "Поточний користувач": os.getenv('USERNAME'),
+            "Поточний користувач": get_current_windows_user(),
             "Причина": f"Невідомий метод автентифікації: {auth_method}"
         }
     
@@ -518,7 +554,7 @@ def connect_to_olap(connection_string=None, auth_details=None):
             print_warning("Можлива причина: Проблеми з Windows-автентифікацією")
             print_info("Рекомендації:")
             print(f"   {Fore.CYAN}1. Спробуйте використати автентифікацію за логіном/паролем (OLAP_AUTH_METHOD=LOGIN)")
-            print(f"   {Fore.CYAN}2. Перевірте, чи має ваш користувач {os.getenv('USERNAME')} доступ до OLAP-кубу")
+            print(f"   {Fore.CYAN}2. Перевірте, чи має ваш користувач {get_current_windows_user()} доступ до OLAP-кубу")
             
         # Вивід технічних деталей для відладки
         print_info("Технічні деталі для відладки:")
@@ -928,7 +964,7 @@ try:
     # Додаємо інформацію про метод автентифікації
     auth_method = os.getenv('OLAP_AUTH_METHOD', AUTH_SSPI).upper()
     if auth_method == AUTH_SSPI:
-        print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Windows (SSPI) як користувач {os.getenv('USERNAME')}")
+        print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Windows (SSPI) як користувач {get_current_windows_user()}")
     elif auth_method == AUTH_LOGIN:
         user = os.getenv('OLAP_USER')
         print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Логін/пароль як користувач {user}")
