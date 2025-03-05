@@ -571,12 +571,21 @@ class AdoCursor:
         self.command = command
         self.rows = None
         self.columns = None
+        self.description = None  # Додаємо атрибут description для сумісності
     
     def execute(self, query):
         """Виконує MDX запит"""
         self.command.CommandText = query
         self.command.CommandType = 1  # adCmdText
         self.recordset = self.command.Execute()[0]
+        
+        # Ініціалізуємо description при виконанні запиту
+        if self.recordset and self.recordset.Fields.Count > 0:
+            self.description = []
+            for i in range(self.recordset.Fields.Count):
+                field = self.recordset.Fields(i)
+                # Формат description як у Python DB API: (name, type_code, display_size, internal_size, precision, scale, null_ok)
+                self.description.append((field.Name, None, None, None, None, None, None))
     
     def fetchall(self):
         """Отримує всі результати запиту"""
@@ -622,6 +631,12 @@ class AdoCursor:
         if not self.columns:
             return []
         return self.columns
+    
+    def close(self):
+        """Закриває рекордсет"""
+        if hasattr(self, 'recordset') and self.recordset:
+            self.recordset.Close()
+        self.recordset = None
 
 # Функція для підключення до OLAP сервера
 def connect_to_olap(connection_string=None, auth_details=None):
