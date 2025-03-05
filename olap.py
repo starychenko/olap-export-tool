@@ -1076,33 +1076,17 @@ def run_mdx_query(connection, reporting_period):
                 delimiter = os.getenv('CSV_DELIMITER', ';')
                 encoding = os.getenv('CSV_ENCODING', 'utf-8-sig')  # з BOM для коректного відображення кирилиці в Excel
                 quoting = csv.QUOTE_ALL if os.getenv('CSV_QUOTING', 'true').lower() == 'true' else csv.QUOTE_MINIMAL
-                decimal = os.getenv('CSV_DECIMAL', ',')
                 
-                # Якщо вибрано кому як десятковий роздільник і дані містять числа з плаваючою точкою,
-                # замінюємо точки на коми для коректного відображення в CSV
-                if decimal == ',':
-                    # Створюємо копію DataFrame щоб не змінювати оригінальний
-                    df_csv = df.copy()
-                    
-                    # Замінюємо NaN/Infinity на None перед експортом
-                    df_csv = df_csv.replace([np.inf, -np.inf], None)
-                    df_csv = df_csv.fillna('')
-                    
-                    # Для всіх числових колонок замінюємо точку на кому
-                    for col in df_csv.select_dtypes(include=['float', 'float64']).columns:
-                        df_csv[col] = df_csv[col].apply(lambda x: str(x).replace('.', ',') if x != '' else '')
-                    
-                    # Експортуємо з заданими налаштуваннями
-                    df_csv.to_csv(file_path, sep=delimiter, encoding=encoding, 
-                              index=False, quoting=quoting)
-                else:
-                    # Замінюємо NaN/Infinity на None перед експортом
-                    df_csv = df.replace([np.inf, -np.inf], None)
-                    df_csv = df_csv.fillna('')
-                    
-                    # Експортуємо з заданими налаштуваннями
-                    df_csv.to_csv(file_path, sep=delimiter, encoding=encoding, 
-                              index=False, quoting=quoting, decimal=decimal)
+                # Створюємо копію DataFrame щоб не змінювати оригінальний
+                df_csv = df.copy()
+                
+                # Замінюємо NaN/Infinity на None перед експортом
+                df_csv = df_csv.replace([np.inf, -np.inf], None)
+                df_csv = df_csv.fillna('')
+                
+                # Експортуємо з заданими налаштуваннями, без обробки десяткового розділювача
+                df_csv.to_csv(file_path, sep=delimiter, encoding=encoding, 
+                          index=False, quoting=quoting)
                 
                 return os.path.getsize(file_path)
             
