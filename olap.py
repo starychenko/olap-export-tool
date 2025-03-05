@@ -1,26 +1,60 @@
 import os
 import sys
+from pathlib import Path
+import pandas as pd
+import numpy as np
 import time
 import datetime
-import re
-import math
 import threading
-import itertools
-import pandas as pd
+import json
+import re
+import itertools  # Додаємо для функції loading_spinner
+import xlsxwriter  # type: ignore # Бібліотека для ефективного створення Excel-файлів
 from colorama import init, Fore, Back, Style
 from dotenv import load_dotenv
 import clr
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.dimensions import ColumnDimension, DimensionHolder
-from openpyxl.worksheet.properties import WorksheetProperties, PageSetupProperties
+import math
 
 # Ініціалізуємо colorama для кольорового виводу в консоль
 init(autoreset=True)
 
 # Завантажуємо змінні середовища з .env файлу
 load_dotenv()
+
+# Функція для конвертації .NET типів у нативні Python типи
+def convert_dotnet_to_python(value):
+    """
+    Конвертує .NET типи даних у нативні Python типи.
+    """
+    import System  # type: ignore
+    
+    if value is None:
+        return None
+    elif isinstance(value, System.DateTime):
+        # Конвертуємо System.DateTime у Python datetime
+        return datetime.datetime(
+            value.Year, value.Month, value.Day, 
+            value.Hour, value.Minute, value.Second, 
+            microsecond=int(value.Millisecond * 1000)
+        )
+    elif isinstance(value, System.Decimal):
+        # Конвертуємо System.Decimal у float
+        return float(value)
+    elif isinstance(value, System.DBNull):
+        # Конвертуємо DBNull у None
+        return None
+    elif isinstance(value, System.Int32) or isinstance(value, System.Int64):
+        # Конвертуємо Int32/Int64 у int
+        return int(value)
+    elif isinstance(value, System.String):
+        # Конвертуємо String у str
+        return str(value)
+    elif isinstance(value, System.Boolean):
+        # Конвертуємо Boolean у bool
+        return bool(value)
+    else:
+        # Для інших типів повертаємо як є
+        return value
 
 # Глобальні змінні для керування анімацією
 animation_running = False
@@ -878,8 +912,14 @@ def run_mdx_query(connection, reporting_period):
             
             cursor.close()
             
-            # Створюємо DataFrame з отриманих даних
-            df = pd.DataFrame(rows, columns=columns)
+            # Конвертуємо .NET типи у нативні Python типи
+            converted_rows = []
+            for row in rows:
+                converted_row = [convert_dotnet_to_python(value) for value in row]
+                converted_rows.append(converted_row)
+            
+            # Створюємо DataFrame з конвертованих даних
+            df = pd.DataFrame(converted_rows, columns=columns)
             
             # Якщо немає даних, повертаємо порожній список
             if len(df) == 0:
@@ -946,50 +986,58 @@ def run_mdx_query(connection, reporting_period):
             # Експортуємо дані у Excel-файл з форматуванням
             print_progress(f"Експорт даних у Excel-файл {filepath}...")
             
-            # Спочатку створюємо Excel-файл з даними
-            df.to_excel(filepath, index=False)
+            # Створюємо Excel-файл за допомогою XlsxWriter
+            workbook = xlsxwriter.Workbook(filepath)
+            worksheet = workbook.add_worksheet(f"{year_num}-{week_num:02d}")
             
-            # Тепер відкриваємо його за допомогою openpyxl для форматування
-            from openpyxl import load_workbook
+            # Налаштування стилів для заголовків з .env (залишаємо тільки заголовки)
+            header_format = workbook.add_format({
+                'bold': True,
+                'font_name': 'Arial',
+                'font_size': int(os.getenv('EXCEL_HEADER_FONT_SIZE', 11)),
+                'font_color': os.getenv('EXCEL_HEADER_FONT_COLOR', 'FFFFFF'),
+                'bg_color': os.getenv('EXCEL_HEADER_COLOR', '00365E'),
+                'align': 'center',
+                'valign': 'vcenter',
+                'text_wrap': True,
+                'border': 1
+            })
             
-            wb = load_workbook(filepath)
-            ws = wb.active
+            # Додаємо заголовки
+            for col_num, column_name in enumerate(df.columns):
+                worksheet.write(0, col_num, column_name, header_format)
             
-            # Налаштування стилів для заголовка з .env
-            header_font = Font(
-                name='Arial', 
-                size=int(os.getenv('EXCEL_HEADER_FONT_SIZE', 11)), 
-                bold=True, 
-                color=os.getenv('EXCEL_HEADER_FONT_COLOR', 'FFFFFF')
-            )
-            header_fill = PatternFill(
-                start_color=os.getenv('EXCEL_HEADER_COLOR', '00365E'), 
-                end_color=os.getenv('EXCEL_HEADER_COLOR', '00365E'), 
-                fill_type='solid'
-            )
-            
-            # Застосування стилів до заголовків
-            for cell in ws[1]:
-                cell.font = header_font
-                cell.fill = header_fill
-                cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-            
-            # Закріплення заголовка, щоб він завжди був видимий при прокрутці
-            ws.freeze_panes = 'A2'  # Закріплюємо перший рядок
+            # Додаємо дані без форматування
+            for row_num, row_data in enumerate(df.values):
+                for col_num, cell_value in enumerate(row_data):
+                    # Додаткова перевірка на .NET типи (це зберігаємо для сумісності)
+                    if "System." in str(type(cell_value)):
+                        cell_value = convert_dotnet_to_python(cell_value)
+                    
+                    # Перевіряємо на NaN/Infinity для чисел з рухомою комою
+                    if isinstance(cell_value, float):
+                        if math.isnan(cell_value) or math.isinf(cell_value):
+                            cell_value = None  # Замінюємо на None (буде пуста клітинка)
+                    
+                    # Записуємо значення без форматування
+                    worksheet.write(row_num + 1, col_num, cell_value)
             
             # Автоматичне налаштування ширини стовпців
-            # Перебираємо всі стовпці та знаходимо максимальну довжину значення
-            for col in range(1, len(df.columns) + 1):
-                column_width = max(
-                    len(str(df.columns[col-1])),  # Довжина заголовка
-                    df.iloc[:, col-1].astype(str).str.len().max()  # Максимальна довжина даних
+            for col_num, column in enumerate(df.columns):
+                # Знаходимо максимальну довжину
+                max_length = max(
+                    len(str(column)),
+                    df.iloc[:, col_num].astype(str).str.len().max() if len(df) > 0 else 0
                 )
-                # Обмежуємо максимальну ширину стовпця
-                adjusted_width = min(column_width + 2, 50)  # +2 для відступів
-                ws.column_dimensions[get_column_letter(col)].width = adjusted_width
+                # Обмежуємо максимальну ширину
+                adjusted_width = min(max_length + 2, 50)
+                worksheet.set_column(col_num, col_num, adjusted_width)
             
-            # Зберігаємо відформатований файл
-            wb.save(filepath)
+            # Закріплюємо верхній рядок
+            worksheet.freeze_panes(1, 0)
+            
+            # Закриваємо книгу для збереження змін
+            workbook.close()
             
             # Отримуємо розмір файлу та форматуємо його для виведення
             file_size_bytes = os.path.getsize(filepath)
@@ -1256,3 +1304,8 @@ def print_connection_details():
         if start_period and end_period:
             print(f"   {Fore.CYAN}Період:       {Fore.WHITE}з {start_period} по {end_period}")
             print(f"   {Fore.CYAN}Кількість періодів: {Fore.WHITE}{len(year_week_pairs)}")
+
+# Зберігаємо деякі налаштування з .env
+EXCEL_HEADER_COLOR = os.getenv('EXCEL_HEADER_COLOR', '00365E')
+EXCEL_HEADER_FONT_COLOR = os.getenv('EXCEL_HEADER_FONT_COLOR', 'FFFFFF')
+EXCEL_HEADER_FONT_SIZE = int(os.getenv('EXCEL_HEADER_FONT_SIZE', 11))
