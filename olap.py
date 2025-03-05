@@ -704,7 +704,21 @@ def connect_to_olap(connection_string=None, auth_details=None):
             print_warning("Спробуємо використати ADOMD.NET, але автентифікація за логіном/паролем може не спрацювати.")
         
         # В інших випадках використовуємо ADOMD.NET (працює добре для Windows-автентифікації)
-        print_info_detail(f"Підключення до OLAP сервера {os.getenv('OLAP_SERVER')} через ADOMD.NET...", auth_details)
+        # Створюємо нові деталі автентифікації для ADOMD на основі Windows
+        adomd_auth_details = {
+            "Метод автентифікації": "Windows-автентифікація (SSPI)",
+            "Поточний користувач": get_current_windows_user()
+        }
+        
+        # Змінюємо рядок підключення для використання Windows-автентифікації
+        if "User ID=" in connection_string:
+            # Видаляємо параметри логіну та пароля і додаємо SSPI
+            connection_string = re.sub(r';User ID=[^;]+;Password=[^;]+;', ";Integrated Security=SSPI;", connection_string)
+        elif "Integrated Security=SSPI" not in connection_string:
+            # Додаємо SSPI, якщо його ще немає
+            connection_string += "Integrated Security=SSPI;"
+        
+        print_info_detail(f"Підключення до OLAP сервера {os.getenv('OLAP_SERVER')} через ADOMD.NET...", adomd_auth_details)
         
         # Інформація про версію провайдера та шлях до DLL
         print_info(f"Шлях до ADOMD.NET: {adomd_dll_path}")
