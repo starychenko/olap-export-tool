@@ -1075,18 +1075,29 @@ def run_mdx_query(connection, reporting_period):
                 # Отримуємо налаштування CSV з .env
                 delimiter = os.getenv('CSV_DELIMITER', ';')
                 encoding = os.getenv('CSV_ENCODING', 'utf-8-sig')  # з BOM для коректного відображення кирилиці в Excel
-                quoting = csv.QUOTE_ALL if os.getenv('CSV_QUOTING', 'true').lower() == 'true' else csv.QUOTE_MINIMAL
                 
-                # Створюємо копію DataFrame щоб не змінювати оригінальний
-                df_csv = df.copy()
+                # Більш гнучке налаштування лапок (основне джерело оптимізації)
+                quoting_mode = os.getenv('CSV_QUOTING', 'minimal').lower()
+                if quoting_mode == 'all':
+                    quoting = csv.QUOTE_ALL
+                elif quoting_mode == 'nonnumeric':
+                    quoting = csv.QUOTE_NONNUMERIC
+                else:  # 'minimal'
+                    quoting = csv.QUOTE_MINIMAL
                 
-                # Замінюємо NaN/Infinity на None перед експортом
-                df_csv = df_csv.replace([np.inf, -np.inf], None)
-                df_csv = df_csv.fillna('')
+                # Замінюємо NaN/Infinity на None перед експортом без копіювання всього DataFrame
+                df_replaced = df.replace([np.inf, -np.inf], None)
                 
-                # Експортуємо з заданими налаштуваннями, без обробки десяткового розділювача
-                df_csv.to_csv(file_path, sep=delimiter, encoding=encoding, 
-                          index=False, quoting=quoting)
+                # Експортуємо з оптимізованими налаштуваннями,
+                # порожні значення автоматично будуть представлені як порожні місця
+                df_replaced.to_csv(
+                    file_path, 
+                    sep=delimiter, 
+                    encoding=encoding,
+                    index=False, 
+                    quoting=quoting,
+                    na_rep=''  # Жорстко задано порожній рядок для NaN значень
+                )
                 
                 return os.path.getsize(file_path)
             
