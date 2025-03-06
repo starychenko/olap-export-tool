@@ -1142,16 +1142,17 @@ def get_available_weeks(connection):
     print_info("Отримання доступних тижнів з куба OLAP...")
     
     query = """
-    /* START QUERY BUILDER */
-    EVALUATE
-    SUMMARIZECOLUMNS(
-        'Calendar'[year_num],
-        'Calendar'[week_num]
-    )
-    ORDER BY 
-        'Calendar'[year_num] ASC,
-        'Calendar'[week_num] ASC
-    /* END QUERY BUILDER */
+        /* START QUERY BUILDER */
+        EVALUATE
+        SUMMARIZECOLUMNS(
+            'Calendar'[year_num],
+            'Calendar'[week_num],
+            KEEPFILTERS( FILTER( ALL( 'Calendar'[year_num] ), NOT( ISBLANK( 'Calendar'[year_num] ))))
+        )
+        ORDER BY 
+            'Calendar'[year_num] ASC,
+            'Calendar'[week_num] ASC
+        /* END QUERY BUILDER */    
     """
     
     try:
