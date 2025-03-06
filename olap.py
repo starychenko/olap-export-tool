@@ -1162,11 +1162,25 @@ def get_available_weeks(connection):
         
         available_weeks = []
         for row in rows:
-            year = int(row[0])  # year_num
-            week = int(row[1])  # week_num
-            available_weeks.append((year, week))
+            # Використовуємо функцію convert_dotnet_to_python для безпечної обробки різних типів даних
+            year_value = convert_dotnet_to_python(row[0])
+            week_value = convert_dotnet_to_python(row[1])
+            
+            # Перевіряємо, що значення не None після конвертації
+            if year_value is not None and week_value is not None:
+                try:
+                    year = int(year_value)
+                    week = int(week_value)
+                    available_weeks.append((year, week))
+                except (ValueError, TypeError) as e:
+                    print_warning(f"Помилка при конвертації значень {year_value}, {week_value}: {e}")
+                    continue
         
         print_info(f"Отримано {len(available_weeks)} доступних тижнів з куба")
+        # Додаємо діагностичну інформацію про пропущені рядки
+        null_rows = sum(1 for row in rows if convert_dotnet_to_python(row[0]) is None or convert_dotnet_to_python(row[1]) is None)
+        if null_rows > 0:
+            print_info(f"Пропущено {null_rows} рядків з пустими значеннями")
         return available_weeks
     
     except Exception as e:
