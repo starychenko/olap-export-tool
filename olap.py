@@ -15,12 +15,333 @@ from dotenv import load_dotenv
 import clr
 import math
 import csv
+import getpass  # Для безпечного введення пароля через консоль
+import base64   # Для кодування/декодування даних
+from cryptography.fernet import Fernet  # Для шифрування даних
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+import uuid
 
 # Ініціалізуємо colorama для кольорового виводу в консоль
 init(autoreset=True)
 
 # Завантажуємо змінні середовища з .env файлу
 load_dotenv()
+
+# Функції для роботи з обліковими даними
+def get_machine_id():
+    """
+    Отримує унікальний ідентифікатор пристрою для шифрування/розшифрування.
+    Стабільна версія для Windows, що не залежить від вибору мережевого адаптера.
+    
+    Returns:
+        str: Унікальний ідентифікатор пристрою
+    """
+    try:
+        # Збираємо стабільні ідентифікатори Windows
+        identifiers = []
+        
+        # 1. Ім'я комп'ютера - стабільний ідентифікатор
+        computer_name = os.environ.get('COMPUTERNAME', '')
+        if computer_name:
+            identifiers.append(computer_name)
+        
+        # 2. USERDOMAIN - теж досить стабільний
+        user_domain = os.environ.get('USERDOMAIN', '')
+        if user_domain:
+            identifiers.append(user_domain)
+            
+        # 3. USERNAME - зазвичай стабільний
+        username = os.environ.get('USERNAME', '')
+        if username:
+            identifiers.append(username)
+            
+        # 4. Шлях до Windows - унікальний для кожної інсталяції
+        windows_dir = os.environ.get('WINDIR', '')
+        if windows_dir:
+            identifiers.append(windows_dir)
+            
+        # 5. Додаємо системний диск
+        system_drive = os.environ.get('SystemDrive', '')
+        if system_drive:
+            identifiers.append(system_drive)
+            
+        # 6. Серійний номер системного диска (якщо можливо отримати)
+        try:
+            import subprocess
+            volume_info = subprocess.run(f'vol {system_drive}', 
+                                      shell=True, 
+                                      capture_output=True, 
+                                      text=True)
+            if volume_info.returncode == 0:
+                # Додаємо серійний номер диска
+                volume_lines = volume_info.stdout.strip().split('\n')
+                for line in volume_lines:
+                    if 'Serial Number' in line or 'Серійний номер' in line:
+                        identifiers.append(line.strip())
+        except:
+            pass
+            
+        # Створюємо комбінований ідентифікатор і хешуємо його
+        import hashlib
+        unique_id = "-".join(identifiers)
+        
+        # Якщо не вдалося зібрати жодних ідентифікаторів, використовуємо запасний варіант
+        if not unique_id:
+            # UUID на основі часу - не ідеально, але краще ніж нічого
+            import time
+            unique_id = f"windows-{int(time.time())}"
+            print_warning("Не вдалося отримати стабільні ідентифікатори системи, використовуємо запасний варіант")
+        
+        # Повертаємо MD5 хеш, який можна використовувати як ключ
+        return hashlib.md5(unique_id.encode()).hexdigest()
+        
+    except Exception as e:
+        print_warning(f"Не вдалося отримати унікальний ідентифікатор пристрою: {e}")
+        # Запасний варіант - хеш від комбінації імені користувача та шляху до Windows
+        fallback = f"user-{os.environ.get('USERNAME', '')}-{os.environ.get('WINDIR', '')}"
+        import hashlib
+        return hashlib.md5(fallback.encode()).hexdigest()
+
+def generate_encryption_key(password, salt=None):
+    """
+    Генерує ключ шифрування на основі пароля
+    
+    Args:
+        password (str): Пароль для генерації ключа
+        salt (bytes, optional): Сіль для генерації ключа. Якщо не вказана, генерується випадкова.
+        
+    Returns:
+        tuple: (key, salt) - ключ шифрування та використана сіль
+    """
+    # Якщо сіль не передана, генеруємо нову
+    if salt is None:
+        salt = os.urandom(16)
+    
+    # Перетворюємо пароль в байти, якщо він є рядком
+    if isinstance(password, str):
+        password = password.encode()
+    
+    # Створюємо ключ шифрування
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+    )
+    key = base64.urlsafe_b64encode(kdf.derive(password))
+    
+    return key, salt
+
+def encrypt_credentials(username, password, encryption_key):
+    """
+    Шифрує облікові дані користувача
+    
+    Args:
+        username (str): Ім'я користувача
+        password (str): Пароль користувача
+        encryption_key (bytes): Ключ шифрування
+        
+    Returns:
+        bytes: Зашифровані дані
+    """
+    # Створюємо об'єкт шифрування
+    cipher = Fernet(encryption_key)
+    
+    # Підготовка даних для шифрування
+    data = f"{username}:{password}".encode()
+    
+    # Шифруємо дані
+    encrypted_data = cipher.encrypt(data)
+    
+    return encrypted_data
+
+def decrypt_credentials(encrypted_data, encryption_key):
+    """
+    Розшифровує облікові дані користувача
+    
+    Args:
+        encrypted_data (bytes): Зашифровані дані
+        encryption_key (bytes): Ключ шифрування
+        
+    Returns:
+        tuple: (username, password) - розшифровані ім'я користувача та пароль
+    """
+    try:
+        # Створюємо об'єкт шифрування
+        cipher = Fernet(encryption_key)
+        
+        # Розшифровуємо дані
+        decrypted_data = cipher.decrypt(encrypted_data)
+        
+        # Розділяємо ім'я користувача та пароль
+        username, password = decrypted_data.decode().split(':', 1)
+        
+        return username, password
+    except Exception as e:
+        print_error(f"Помилка розшифрування облікових даних: {e}")
+        return None, None
+
+def save_credentials(username, password, encrypted=False):
+    """
+    Зберігає облікові дані у файл
+    
+    Args:
+        username (str): Ім'я користувача
+        password (str): Пароль користувача
+        encrypted (bool): Чи потрібно шифрувати дані
+        
+    Returns:
+        bool: True, якщо дані успішно збережені
+    """
+    # Отримуємо шлях до файлу з облікових даних
+    credentials_file = os.getenv('OLAP_CREDENTIALS_FILE', '.olap_credentials')
+    
+    try:
+        # Якщо потрібно шифрувати дані
+        if encrypted:
+            # Використовуємо унікальний ідентифікатор пристрою для ключа
+            machine_id = get_machine_id()
+            # Генеруємо ключ шифрування
+            key, salt = generate_encryption_key(machine_id)
+            # Шифруємо дані
+            encrypted_data = encrypt_credentials(username, password, key)
+            
+            # Зберігаємо зашифровані дані та сіль
+            with open(credentials_file, 'wb') as f:
+                f.write(salt)  # Записуємо сіль
+                f.write(b'\n')  # Роздільник
+                f.write(encrypted_data)  # Записуємо зашифровані дані
+                
+            print_info(f"Облікові дані збережено та зашифровано з унікальним ідентифікатором пристрою")
+        else:
+            # Зберігаємо дані у відкритому вигляді
+            with open(credentials_file, 'w') as f:
+                f.write(f"{username}:{password}")
+        
+        # Змінюємо права доступу до файлу (тільки для поточного користувача)
+        try:
+            import stat
+            os.chmod(credentials_file, stat.S_IRUSR | stat.S_IWUSR)
+        except Exception as e:
+            print_warning(f"Не вдалося змінити права доступу до файлу облікових даних: {e}")
+        
+        return True
+    except Exception as e:
+        print_error(f"Помилка збереження облікових даних: {e}")
+        return False
+
+def load_credentials(encrypted=False):
+    """
+    Завантажує облікові дані з файлу
+    
+    Args:
+        encrypted (bool): Чи зашифровані дані
+        
+    Returns:
+        tuple: (username, password) - облікові дані користувача
+    """
+    # Отримуємо шлях до файлу з облікових даних
+    credentials_file = os.getenv('OLAP_CREDENTIALS_FILE', '.olap_credentials')
+    
+    # Перевіряємо наявність файлу
+    if not os.path.exists(credentials_file):
+        return None, None
+    
+    try:
+        # Якщо дані зашифровані
+        if encrypted:
+            with open(credentials_file, 'rb') as f:
+                content = f.read().split(b'\n', 1)
+                
+                # Перевіряємо формат файлу
+                if len(content) < 2:
+                    print_error("Невірний формат файлу облікових даних")
+                    return None, None
+                
+                salt, encrypted_data = content
+                
+                # Використовуємо унікальний ідентифікатор пристрою замість запиту паролю
+                machine_id = get_machine_id()
+                
+                # Генеруємо ключ шифрування на основі унікального ідентифікатора пристрою
+                key, _ = generate_encryption_key(machine_id, salt)
+                
+                # Розшифровуємо дані
+                username, password = decrypt_credentials(encrypted_data, key)
+                
+                if username and password:
+                    print_info(f"Облікові дані успішно розшифровано з використанням унікального ідентифікатора пристрою")
+                    return username, password
+                else:
+                    print_error("Не вдалося розшифрувати облікові дані. Можливо файл пошкоджено або дані були зашифровані на іншому комп'ютері.")
+                    return None, None
+        else:
+            # Завантажуємо дані у відкритому вигляді
+            with open(credentials_file, 'r') as f:
+                content = f.read().strip()
+                
+                # Перевіряємо формат даних
+                if ':' not in content:
+                    print_error("Невірний формат файлу облікових даних")
+                    return None, None
+                
+                username, password = content.split(':', 1)
+                return username, password
+    except Exception as e:
+        print_error(f"Помилка завантаження облікових даних: {e}")
+        return None, None
+
+def delete_credentials():
+    """
+    Видаляє файл з обліковими даними
+    
+    Returns:
+        bool: True, якщо файл успішно видалено
+    """
+    # Отримуємо шлях до файлу з облікових даних
+    credentials_file = os.getenv('OLAP_CREDENTIALS_FILE', '.olap_credentials')
+    
+    # Перевіряємо наявність файлу
+    if not os.path.exists(credentials_file):
+        return True
+    
+    try:
+        # Видаляємо файл
+        os.remove(credentials_file)
+        return True
+    except Exception as e:
+        print_error(f"Помилка видалення файлу облікових даних: {e}")
+        return False
+
+def prompt_credentials(with_domain=False):
+    """
+    Запитує облікові дані у користувача
+    
+    Args:
+        with_domain (bool): Чи додавати домен до імені користувача
+        
+    Returns:
+        tuple: (username, password) - облікові дані користувача
+    """
+    print_info("Введіть облікові дані для підключення до OLAP:")
+    
+    # Запитуємо ім'я користувача
+    username = input(f"{Fore.CYAN}Ім'я користувача: {Fore.RESET}")
+    
+    # Запитуємо пароль (не відображається при введенні)
+    password = getpass.getpass(f"{Fore.CYAN}Пароль: {Fore.RESET}")
+    
+    # Якщо потрібно додати домен
+    if with_domain and username:
+        domain = os.getenv('OLAP_DOMAIN')
+        if domain:
+            # Перевіряємо, чи вже включений домен
+            if '\\' not in username and not username.startswith(f"{domain}\\"):
+                username = f"{domain}\\{username}"
+                print_info(f"Використовуємо повне ім'я користувача: {username}")
+    
+    return username, password
 
 # Функція для конвертації .NET типів у нативні Python типи
 def convert_dotnet_to_python(value):
@@ -521,24 +842,42 @@ def get_connection_string():
         }
     elif auth_method == AUTH_LOGIN:
         # Автентифікація за логіном/паролем
-        user = os.getenv('OLAP_USER')
-        password = os.getenv('OLAP_PASSWORD')
         
-        if not user or not password:
-            print_warning("Обрано автентифікацію за логіном/паролем, але дані не вказані. Використовуємо SSPI.")
+        # Перевіряємо, чи увімкнене шифрування даних
+        use_encryption = os.getenv('OLAP_CREDENTIALS_ENCRYPTED', 'false').lower() in ('true', '1', 'yes')
+        
+        # Перевіряємо, чи є збережені облікові дані
+        username, password = load_credentials(encrypted=use_encryption)
+        
+        # Якщо дані не знайдені або пошкоджені, запитуємо їх через консоль
+        if not username or not password:
+            print_info("Облікові дані не знайдені або пошкоджені.")
+            
+            # Видаляємо файл з пошкодженими даними (якщо такий є)
+            delete_credentials()
+            
+            # Запитуємо облікові дані через консоль, з додаванням домену
+            username, password = prompt_credentials(with_domain=True)
+        
+        # Перевіряємо наявність логіна та пароля
+        if not username or not password:
+            print_warning("Облікові дані не вказані. Використовуємо Windows-автентифікацію (SSPI).")
             connection_string += "Integrated Security=SSPI;"
             auth_details = {
                 "Метод автентифікації": "Windows-автентифікація (SSPI) - автоматично",
                 "Поточний користувач": get_current_windows_user(),
-                "Причина": "Логін або пароль не вказані"
+                "Причина": "Облікові дані не вказані"
             }
         else:
-            connection_string += f"User ID={user};Password={password};Persist Security Info=True;Update Isolation Level=2;"
+            # Використовуємо вказані облікові дані
+            connection_string += f"User ID={username};Password={password};Persist Security Info=True;Update Isolation Level=2;"
             auth_details = {
                 "Метод автентифікації": "Логін/пароль",
-                "Користувач": user,
-                "Пароль": password  # Буде приховано у виводі
+                "Користувач": username,
+                "Пароль": "********"  # Заміна для безпеки
             }
+            
+            # Будемо зберігати дані тільки після успішної авторизації
     else:
         # Невідомий метод автентифікації, використовуємо SSPI
         print_warning(f"Невідомий метод автентифікації '{auth_method}'. Використовуємо SSPI.")
@@ -578,6 +917,25 @@ def connect_using_oledb(connection_string, auth_details):
         cursor = OleDbCursor(connection)
         
         print_success(f"Підключення до OLAP сервера через OleDb успішно встановлено")
+        
+        # Після успішної авторизації зберігаємо облікові дані, якщо використовувалась LOGIN автентифікація
+        if os.getenv('OLAP_AUTH_METHOD', '').upper() == AUTH_LOGIN:
+            # Витягуємо логін з рядка підключення (за наявності)
+            user_match = re.search(r'User ID=([^;]+)', connection_string)
+            password_match = re.search(r'Password=([^;]+)', connection_string)
+            
+            if user_match and password_match:
+                username = user_match.group(1)
+                password = password_match.group(1)
+                
+                # Визначаємо, чи потрібно шифрувати дані
+                use_encryption = os.getenv('OLAP_CREDENTIALS_ENCRYPTED', 'false').lower() in ('true', '1', 'yes')
+                
+                # Зберігаємо дані у файл
+                if save_credentials(username, password, encrypted=use_encryption):
+                    print_success(f"Облікові дані успішно збережено" + 
+                                  (f" (зашифровано)" if use_encryption else ""))
+        
         return connection, cursor
     except Exception as e:
         print_tech_error(f"Помилка підключення до OLAP сервера через OleDb", e)
@@ -585,7 +943,10 @@ def connect_using_oledb(connection_string, auth_details):
         # Додаткова інформація про можливі причини помилки
         if "Login failed" in str(e) or "логін" in str(e).lower():
             print_warning("Можлива причина: Неправильний логін або пароль")
-            print_info("Рекомендація: Перевірте значення OLAP_USER та OLAP_PASSWORD у файлі .env")
+            print_info("Рекомендація: Спробуйте ввести інші облікові дані")
+            
+            # Видаляємо старі облікові дані, якщо такі є
+            delete_credentials()
         elif "provider" in str(e).lower():
             print_warning("Можлива причина: Проблеми з провайдером MSOLAP")
             print_info("Рекомендації:")
@@ -675,7 +1036,7 @@ class OleDbCursor:
         self.command = None
 
 # Функція для підключення до OLAP сервера
-def connect_to_olap(connection_string=None, auth_details=None):
+def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
     """Підключається до OLAP сервера і повертає з'єднання"""
     if connection_string is None:
         connection_string, auth_details = get_connection_string()
@@ -686,7 +1047,7 @@ def connect_to_olap(connection_string=None, auth_details=None):
     try:
         # Якщо використовується LOGIN автентифікація - використовуємо OleDbConnection
         # Якщо використовується SSPI автентифікація - використовуємо ADOMD.NET
-        if auth_method == AUTH_LOGIN and os.getenv('OLAP_USER') and os.getenv('OLAP_PASSWORD'):
+        if auth_method == AUTH_LOGIN and ("User ID=" in connection_string and "Password=" in connection_string):
             # Використовуємо OleDbConnection з System.Data.OleDb
             print_info(f"Використовуємо підключення через OleDbConnection для автентифікації за логіном/паролем")
             oledb_connection, cursor = connect_using_oledb(connection_string, auth_details)
@@ -699,6 +1060,33 @@ def connect_to_olap(connection_string=None, auth_details=None):
                     '_oledb_connection': oledb_connection  # Зберігаємо посилання на оригінальне підключення
                 })
                 return connection_wrapper()
+            
+            # Якщо OleDb підключення не вдалося, і ми використовуємо LOGIN автентифікацію,
+            # можливо, логін або пароль некоректні
+            if auth_method == AUTH_LOGIN and retry_count > 0:
+                print_warning("Не вдалося підключитися з поточними обліковими даними")
+                
+                # Видаляємо збережені облікові дані
+                delete_credentials()
+                
+                # Запитуємо нові облікові дані
+                username, password = prompt_credentials(with_domain=True)
+                
+                if username and password:
+                    # Формуємо новий рядок підключення
+                    new_connection_string = f"Provider=MSOLAP;Data Source={os.getenv('OLAP_SERVER')};Initial Catalog={os.getenv('OLAP_DATABASE')};"
+                    new_connection_string += f"User ID={username};Password={password};Persist Security Info=True;Update Isolation Level=2;"
+                    
+                    # Оновлюємо дані автентифікації
+                    new_auth_details = {
+                        "Метод автентифікації": "Логін/пароль",
+                        "Користувач": username,
+                        "Пароль": "********"  # Заміна для безпеки
+                    }
+                    
+                    # Спробуємо підключитися знову (без рекурсії)
+                    print_info("Спроба повторного підключення з новими обліковими даними...")
+                    return connect_to_olap(new_connection_string, new_auth_details, retry_count=retry_count-1)
             
             # Якщо OleDb підключення не вдалося, повідомляємо про помилку
             print_error("Не вдалося встановити підключення для LOGIN автентифікації. Перевірте параметри підключення.")
@@ -745,7 +1133,33 @@ def connect_to_olap(connection_string=None, auth_details=None):
         # Додаткова інформація про можливі причини помилки
         if "Login failed" in str(e) or "логін" in str(e).lower():
             print_warning("Можлива причина: Неправильний логін або пароль")
-            print_info("Рекомендація: Перевірте значення OLAP_USER та OLAP_PASSWORD у файлі .env")
+            
+            # Якщо використовувалася автентифікація за логіном і паролем, пропонуємо повторити
+            if auth_method == AUTH_LOGIN and retry_count > 0:
+                # Видаляємо збережені облікові дані
+                delete_credentials()
+                
+                # Запитуємо нові облікові дані
+                print_info("Спробуйте ввести інші облікові дані:")
+                username, password = prompt_credentials(with_domain=True)
+                
+                if username and password:
+                    # Формуємо новий рядок підключення
+                    new_connection_string = f"Provider=MSOLAP;Data Source={os.getenv('OLAP_SERVER')};Initial Catalog={os.getenv('OLAP_DATABASE')};"
+                    new_connection_string += f"User ID={username};Password={password};Persist Security Info=True;Update Isolation Level=2;"
+                    
+                    # Оновлюємо дані автентифікації
+                    new_auth_details = {
+                        "Метод автентифікації": "Логін/пароль",
+                        "Користувач": username,
+                        "Пароль": "********"  # Заміна для безпеки
+                    }
+                    
+                    # Спробуємо підключитися знову (без рекурсії)
+                    print_info("Спроба повторного підключення з новими обліковими даними...")
+                    return connect_to_olap(new_connection_string, new_auth_details, retry_count=retry_count-1)
+            else:
+                print_info("Рекомендація: Спробуйте змінити OLAP_AUTH_METHOD=LOGIN у файлі .env та перезапустіть програму")
         elif "provider" in str(e).lower():
             print_warning("Можлива причина: Проблеми з провайдером")
             print_info("Рекомендації:")
@@ -1217,6 +1631,15 @@ try:
     
     print_header(f"OLAP ЕКСПОРТ ДАНИХ - НАЛАШТУВАННЯ")
     
+    # Перевіряємо наявність аргументів командного рядка
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "clear_credentials":
+        # Очищення збережених облікових даних
+        if delete_credentials():
+            print_success("Збережені облікові дані успішно видалено")
+        else:
+            print_error("Не вдалося видалити збережені облікові дані")
+        sys.exit(0)
+    
     # Зчитуємо періоди з .env файлу
     start_period = os.getenv('YEAR_WEEK_START')
     end_period = os.getenv('YEAR_WEEK_END')
@@ -1277,7 +1700,10 @@ try:
     if auth_method == AUTH_SSPI:
         print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Windows (SSPI) як користувач {get_current_windows_user()}")
     elif auth_method == AUTH_LOGIN:
-        user = os.getenv('OLAP_USER')
+        # Беремо значення username зі збережених облікових даних, а не зі змінної середовища
+        credentials_user, _ = load_credentials(encrypted=os.getenv('OLAP_CREDENTIALS_ENCRYPTED', 'false').lower() in ('true', '1', 'yes'))
+        # Якщо облікові дані не вдалося завантажити, спробуємо використати змінну OLAP_USER
+        user = credentials_user or os.getenv('OLAP_USER', 'Невідомий користувач')
         print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Логін/пароль як користувач {user} через OleDbConnection")
     else:
         print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Невідомий метод ({auth_method})")
@@ -1396,13 +1822,16 @@ def print_connection_details():
     if auth_method == AUTH_SSPI:
         print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Windows (SSPI) як користувач {get_current_windows_user()}")
     elif auth_method == AUTH_LOGIN:
-        user = os.getenv('OLAP_USER')
+        # Беремо значення username зі збережених облікових даних, а не зі змінної середовища
+        credentials_user, _ = load_credentials(encrypted=os.getenv('OLAP_CREDENTIALS_ENCRYPTED', 'false').lower() in ('true', '1', 'yes'))
+        # Якщо облікові дані не вдалося завантажити, спробуємо використати змінну OLAP_USER
+        user = credentials_user or os.getenv('OLAP_USER', 'Невідомий користувач')
         print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Логін/пароль як користувач {user} через OleDbConnection")
     else:
         print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Невідомий метод ({auth_method})")
     
     # Виводимо інформацію про періоди
-    if 'start_period' in locals() and 'end_period' in locals() and 'year_week_pairs' in locals():
+    if 'start_period' in globals() and 'end_period' in globals() and 'year_week_pairs' in globals():
         if start_period and end_period:
             print(f"   {Fore.CYAN}Період:       {Fore.WHITE}з {start_period} по {end_period}")
             print(f"   {Fore.CYAN}Кількість періодів: {Fore.WHITE}{len(year_week_pairs)}")
