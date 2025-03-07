@@ -157,10 +157,10 @@ catch {
 
 # Check for .env file
 if (-not (Test-Path -Path ".\.env")) {
-    if (Test-Path -Path ".\env.example") {
-        Write-ColorOutput ".env file not found. Creating it from env.example..." "Yellow"
+    if (Test-Path -Path ".\.env.example") {
+        Write-ColorOutput ".env file not found. Creating it from .env.example..." "Yellow"
         try {
-            Copy-Item -Path ".\env.example" -Destination ".\.env"
+            Copy-Item -Path ".\.env.example" -Destination ".\.env"
             Write-ColorOutput ".env file created. Don't forget to configure it according to your environment!" "Yellow"
         }
         catch {
@@ -168,7 +168,7 @@ if (-not (Test-Path -Path ".\.env")) {
         }
     }
     else {
-        Write-ColorOutput "Warning: .env and env.example files not found. You need to create an .env file manually." "Red"
+        Write-ColorOutput "Warning: .env and .env.example files not found. You need to create an .env file manually." "Red"
     }
 }
 
