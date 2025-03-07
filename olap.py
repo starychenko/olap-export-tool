@@ -1783,15 +1783,18 @@ def get_available_weeks(connection):
     query = """
         /* START QUERY BUILDER */
         EVALUATE
+        FILTER(
         SUMMARIZECOLUMNS(
             'Calendar'[year_num],
             'Calendar'[week_num],
             KEEPFILTERS( FILTER( ALL( 'Calendar'[year_num] ), NOT( ISBLANK( 'Calendar'[year_num] ))))
         )
+        ,NOT( ISBLANK( [sell_qty] ))
+        )
         ORDER BY 
             'Calendar'[year_num] ASC,
             'Calendar'[week_num] ASC
-        /* END QUERY BUILDER */    
+        /* END QUERY BUILDER */
     """
 
     try:
