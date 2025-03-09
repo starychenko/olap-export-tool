@@ -6,11 +6,10 @@ import numpy as np
 import time
 import datetime
 import threading
-import json
 import re
 import itertools  # Додаємо для функції loading_spinner
 import xlsxwriter  # type: ignore # Бібліотека для ефективного створення Excel-файлів
-from colorama import init, Fore, Back, Style
+from colorama import init, Fore, Style
 from dotenv import load_dotenv
 import clr
 import math
@@ -20,13 +19,30 @@ import base64  # Для кодування/декодування даних
 from cryptography.fernet import Fernet  # Для шифрування даних
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import uuid
 
 # Ініціалізуємо colorama для кольорового виводу в консоль
 init(autoreset=True)
 
 # Завантажуємо змінні середовища з .env файлу
 load_dotenv()
+
+
+# Допоміжна функція для створення директорій
+def ensure_dir(dir_path):
+    """
+    Створює директорію, якщо вона не існує.
+    Використовує pathlib.Path замість os.path для кращої кросплатформеності.
+
+    Args:
+        dir_path (str or Path): Шлях до директорії
+
+    Returns:
+        Path: Об'єкт Path для створеної директорії
+    """
+    path = Path(dir_path)
+    path.mkdir(parents=True, exist_ok=True)
+    print_info(f"Директорія '{path}' перевірена/створена")
+    return path
 
 
 # Функції для роботи з обліковими даними
@@ -207,7 +223,7 @@ def save_credentials(username, password, encrypted=False):
         bool: True, якщо дані успішно збережені
     """
     # Отримуємо шлях до файлу з облікових даних
-    credentials_file = os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials")
+    credentials_file = Path(os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials"))
 
     try:
         # Якщо потрібно шифрувати дані
@@ -260,10 +276,10 @@ def load_credentials(encrypted=False):
         tuple: (username, password) - облікові дані користувача
     """
     # Отримуємо шлях до файлу з облікових даних
-    credentials_file = os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials")
+    credentials_file = Path(os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials"))
 
     # Перевіряємо наявність файлу
-    if not os.path.exists(credentials_file):
+    if not credentials_file.exists():
         return None, None
 
     try:
@@ -323,15 +339,15 @@ def delete_credentials():
         bool: True, якщо файл успішно видалено
     """
     # Отримуємо шлях до файлу з облікових даних
-    credentials_file = os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials")
+    credentials_file = Path(os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials"))
 
     # Перевіряємо наявність файлу
-    if not os.path.exists(credentials_file):
+    if not credentials_file.exists():
         return True
 
     try:
         # Видаляємо файл
-        os.remove(credentials_file)
+        credentials_file.unlink()
         return True
     except Exception as e:
         print_error(f"Помилка видалення файлу облікових даних: {e}")
@@ -1148,12 +1164,6 @@ class OleDbCursor:
 
         return row
 
-    def get_column_names(self):
-        """Повертає імена стовпців"""
-        if not self.columns:
-            return []
-        return self.columns
-
     def close(self):
         """Закриває reader і command"""
         if self.reader and not self.reader.IsClosed:
@@ -1265,16 +1275,17 @@ def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
 
         # Інформація про версію провайдера та шлях до DLL
         print_info(f"Шлях до ADOMD.NET: {adomd_dll_path}")
-        dll_exists = os.path.exists(adomd_dll_path)
+        adomd_path = Path(adomd_dll_path)
+        dll_exists = adomd_path.exists()
         if not dll_exists:
             print_warning(
                 "Шлях до ADOMD.NET не знайдено! Перевірте налаштування ADOMD_DLL_PATH у файлі .env"
             )
         else:
             dll_files = [
-                f for f in os.listdir(adomd_dll_path) if f.lower().endswith(".dll")
+                f for f in adomd_path.iterdir() if f.name.lower().endswith(".dll")
             ]
-            adomd_files = [f for f in dll_files if "adomd" in f.lower()]
+            adomd_files = [f.name for f in dll_files if "adomd" in f.name.lower()]
             if adomd_files:
                 print_info(f"Знайдено ADOMD.NET файли: {', '.join(adomd_files)}")
             else:
@@ -1388,18 +1399,16 @@ def run_mdx_query(connection, reporting_period):
     filter_fg1_name = os.getenv("FILTER_FG1_NAME")
 
     # Формуємо шлях для збереження результатів
-    result_dir = "result"
-    year_dir = os.path.join(result_dir, str(year_num))
+    result_dir = Path("result")
+    year_dir = result_dir / str(year_num)
 
-    # Перевіряємо і створюємо папку для року, якщо вона не існує
-    if not os.path.exists(year_dir):
-        os.makedirs(year_dir)
-        print_info(f"Створено директорію '{year_dir}'")
+    # Створюємо директорію для року за допомогою функції ensure_dir
+    ensure_dir(year_dir)
 
     # Формуємо назву файлу з ведучим нулем для тижня
     filename = f"{year_num}-{week_num:02d}.xlsx"
     # Повний шлях до файлу
-    filepath = os.path.join(year_dir, filename)
+    filepath = year_dir / filename
 
     # Виводимо інформацію про запит
     print_info(f"Формування MDX запиту з параметрами:")
@@ -1627,8 +1636,11 @@ def run_mdx_query(connection, reporting_period):
             def export_to_xlsx(file_path):
                 print_progress(f"Експорт даних у Excel-файл {file_path}...")
 
+                # Переконуємося, що шлях є строкою (необхідно для xlsxwriter)
+                file_path_str = str(file_path)
+
                 # Створюємо Excel-файл за допомогою XlsxWriter
-                workbook = xlsxwriter.Workbook(file_path)
+                workbook = xlsxwriter.Workbook(file_path_str)
                 worksheet = workbook.add_worksheet(f"{year_num}-{week_num:02d}")
 
                 # Налаштування стилів для заголовків з .env (залишаємо тільки заголовки)
@@ -1689,11 +1701,16 @@ def run_mdx_query(connection, reporting_period):
 
                 # Зберігаємо файл
                 workbook.close()
-                return os.path.getsize(file_path)
+
+                # Повертаємо розмір файлу
+                return Path(file_path_str).stat().st_size
 
             # Функція для експорту в CSV
             def export_to_csv(file_path):
                 print_progress(f"Експорт даних у CSV-файл {file_path}...")
+
+                # Переконуємося, що шлях є строкою
+                file_path_str = str(file_path)
 
                 # Отримуємо налаштування CSV з .env
                 delimiter = os.getenv("CSV_DELIMITER", ";")
@@ -1716,7 +1733,7 @@ def run_mdx_query(connection, reporting_period):
                 # Експортуємо з оптимізованими налаштуваннями,
                 # порожні значення автоматично будуть представлені як порожні місця
                 df_replaced.to_csv(
-                    file_path,
+                    file_path_str,
                     sep=delimiter,
                     encoding=encoding,
                     index=False,
@@ -1724,30 +1741,22 @@ def run_mdx_query(connection, reporting_period):
                     na_rep="",  # Жорстко задано порожній рядок для NaN значень
                 )
 
-                return os.path.getsize(file_path)
+                # Повертаємо розмір файлу
+                return Path(file_path_str).stat().st_size
 
             # Експортуємо дані у вибрані формати
             exported_files = []
 
-            # Використовуємо той самий шлях, що визначений на початку функції
-            # Формуємо результуючу директорію
-            result_dir = "result"
-            year_dir = os.path.join(result_dir, str(year_num))
-
-            # Перевіряємо і створюємо папку для року, якщо вона не існує
-            if not os.path.exists(year_dir):
-                os.makedirs(year_dir)
-                print_info(f"Створено директорію '{year_dir}'")
-
+            # При експорті використовуємо шляхи на основі pathlib.Path
             if export_xlsx:
-                xlsx_path = os.path.join(year_dir, f"{year_num}-{week_num:02d}.xlsx")
-                xlsx_size = export_to_xlsx(xlsx_path)
-                exported_files.append((xlsx_path, xlsx_size))
+                xlsx_path = year_dir / f"{year_num}-{week_num:02d}.xlsx"
+                xlsx_size = export_to_xlsx(str(xlsx_path))
+                exported_files.append((str(xlsx_path), xlsx_size))
 
             if export_csv:
-                csv_path = os.path.join(year_dir, f"{year_num}-{week_num:02d}.csv")
-                csv_size = export_to_csv(csv_path)
-                exported_files.append((csv_path, csv_size))
+                csv_path = year_dir / f"{year_num}-{week_num:02d}.csv"
+                csv_size = export_to_csv(str(csv_path))
+                exported_files.append((str(csv_path), csv_size))
 
             # Виводимо інформацію про експортовані файли
             for filepath, file_size_bytes in exported_files:
@@ -1903,19 +1912,15 @@ try:
     filter_fg1_name = os.getenv("FILTER_FG1_NAME")
 
     # Створюємо структуру папок для збереження результатів
-    result_dir = "result"
+    result_dir = Path("result")
 
-    # Перевіряємо і створюємо основну папку, якщо вона не існує
-    if not os.path.exists(result_dir):
-        os.makedirs(result_dir)
-        print_info(f"Створено директорію '{result_dir}'")
+    # Створюємо основну директорію
+    ensure_dir(result_dir)
 
     # Попередньо створюємо всі папки для років, які будуть використовуватись
     for year, _ in set((year, 0) for year, _ in year_week_pairs):
-        year_dir = os.path.join(result_dir, str(year))
-        if not os.path.exists(year_dir):
-            os.makedirs(year_dir)
-            print_info(f"Створено директорію '{year_dir}'")
+        year_dir = result_dir / str(year)
+        ensure_dir(year_dir)
 
     # Зчитуємо налаштування таймауту між запитами
     query_timeout = int(
@@ -2046,7 +2051,8 @@ try:
 
     if files_created:
         for i, file_path in enumerate(files_created, 1):
-            file_size_bytes = os.path.getsize(file_path)
+            path = Path(file_path)
+            file_size_bytes = path.stat().st_size
             if file_size_bytes < 1024 * 1024:  # Менше 1 МБ
                 file_size = f"{file_size_bytes / 1024:.1f} КБ"
             else:  # Більше або рівно 1 МБ
@@ -2069,52 +2075,3 @@ except Exception as e:
 finally:
     # Переконуємось, що анімація зупинена
     animation_running = False
-
-
-def print_connection_details():
-    """Виводить інформацію про з'єднання з OLAP сервером"""
-    print(f"\n{Fore.CYAN}Інформація про підключення до OLAP сервера:")
-    print(f"   {Fore.CYAN}Сервер: {Fore.WHITE}{os.getenv('OLAP_SERVER')}")
-    print(f"   {Fore.CYAN}База даних: {Fore.WHITE}{os.getenv('OLAP_DATABASE')}")
-
-    # Визначаємо метод автентифікації
-    auth_method = os.getenv("OLAP_AUTH_METHOD", AUTH_SSPI).upper()
-    if auth_method == AUTH_SSPI:
-        print(
-            f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Windows (SSPI) як користувач {get_current_windows_user()}"
-        )
-    elif auth_method == AUTH_LOGIN:
-        # Беремо значення username зі збережених облікових даних, а не зі змінної середовища
-        credentials_user, _ = load_credentials(
-            encrypted=os.getenv("OLAP_CREDENTIALS_ENCRYPTED", "false").lower()
-            in ("true", "1", "yes")
-        )
-        # Якщо облікові дані не вдалося завантажити, спробуємо використати змінну OLAP_USER
-        user = credentials_user or os.getenv("OLAP_USER", "Невідомий користувач")
-        print(
-            f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Логін/пароль як користувач {user} через OleDbConnection"
-        )
-    else:
-        print(
-            f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Невідомий метод ({auth_method})"
-        )
-
-    # Виводимо інформацію про періоди
-    if (
-        "start_period" in globals()
-        and "end_period" in globals()
-        and "year_week_pairs" in globals()
-    ):
-        if start_period and end_period:
-            print(
-                f"   {Fore.CYAN}Період:       {Fore.WHITE}з {start_period} по {end_period}"
-            )
-            print(
-                f"   {Fore.CYAN}Кількість періодів: {Fore.WHITE}{len(year_week_pairs)}"
-            )
-
-
-# Зберігаємо деякі налаштування з .env
-EXCEL_HEADER_COLOR = os.getenv("EXCEL_HEADER_COLOR", "00365E")
-EXCEL_HEADER_FONT_COLOR = os.getenv("EXCEL_HEADER_FONT_COLOR", "FFFFFF")
-EXCEL_HEADER_FONT_SIZE = int(os.getenv("EXCEL_HEADER_FONT_SIZE", 11))
