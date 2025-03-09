@@ -223,7 +223,7 @@ def save_credentials(username, password, encrypted=False):
         bool: True, якщо дані успішно збережені
     """
     global auth_username  # Використовуємо глобальну змінну для зберігання імені користувача
-    
+
     # Отримуємо шлях до файлу з облікових даних
     credentials_file = Path(os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials"))
 
@@ -260,7 +260,7 @@ def save_credentials(username, password, encrypted=False):
             print_warning(
                 f"Не вдалося змінити права доступу до файлу облікових даних: {e}"
             )
-            
+
         # Зберігаємо ім'я користувача для подальшого використання
         auth_username = username
 
@@ -281,7 +281,7 @@ def load_credentials(encrypted=False):
         tuple: (username, password) - облікові дані користувача
     """
     global auth_username  # Використовуємо глобальну змінну для зберігання імені користувача
-    
+
     # Отримуємо шлях до файлу з облікових даних
     credentials_file = Path(os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials"))
 
@@ -333,7 +333,9 @@ def load_credentials(encrypted=False):
                     return None, None
 
                 username, password = content.split(":", 1)
-                auth_username = username  # Зберігаємо ім'я користувача для подальшого використання
+                auth_username = (
+                    username  # Зберігаємо ім'я користувача для подальшого використання
+                )
                 return username, password
     except Exception as e:
         print_error(f"Помилка завантаження облікових даних: {e}")
@@ -348,7 +350,7 @@ def delete_credentials():
         bool: True, якщо файл успішно видалено
     """
     global auth_username  # Використовуємо глобальну змінну для зберігання імені користувача
-    
+
     # Отримуємо шлях до файлу з облікових даних
     credentials_file = Path(os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials"))
 
@@ -1089,13 +1091,15 @@ def connect_using_oledb(connection_string, auth_details):
         return connection, cursor
     except Exception as e:
         print_tech_error(f"Помилка підключення до OLAP сервера через OleDb", e)
-        
+
         # Визначаємо метод автентифікації
         auth_method = os.getenv("OLAP_AUTH_METHOD", AUTH_SSPI).upper()
-        
+
         # Використовуємо функцію обробки помилок автентифікації
-        connection_result = handle_auth_error(e, auth_method, 1, connection_string, auth_details, is_oledb=True)
-        
+        connection_result = handle_auth_error(
+            e, auth_method, 1, connection_string, auth_details, is_oledb=True
+        )
+
         # Якщо handle_auth_error поверне None (не обробив помилку), повертаємо None, None
         return (connection_result, None) if connection_result else (None, None)
 
@@ -1179,10 +1183,12 @@ class OleDbCursor:
 
 
 # Функція для обробки помилок автентифікації
-def handle_auth_error(e, auth_method, retry_count, connection_string, auth_details, is_oledb=False):
+def handle_auth_error(
+    e, auth_method, retry_count, connection_string, auth_details, is_oledb=False
+):
     """
     Обробляє помилки автентифікації та спробує повторно підключитися з новими обліковими даними.
-    
+
     Args:
         e (Exception): Об'єкт виключення
         auth_method (str): Поточний метод автентифікації (AUTH_SSPI або AUTH_LOGIN)
@@ -1190,82 +1196,104 @@ def handle_auth_error(e, auth_method, retry_count, connection_string, auth_detai
         connection_string (str): Поточний рядок підключення
         auth_details (dict): Поточні деталі автентифікації
         is_oledb (bool): Чи викликається функція з контексту OleDbConnection
-        
+
     Returns:
         object or None: З'єднання у випадку успіху, None у випадку невдачі
     """
     # Перевіряємо, чи є помилка пов'язана з автентифікацією
     if "Login failed" in str(e) or "логін" in str(e).lower():
         print_warning("Можлива причина: Неправильний логін або пароль")
-        
+
         # Якщо використовувалася автентифікація за логіном і паролем і є ще спроби
         if auth_method == AUTH_LOGIN and retry_count > 0:
             # Видаляємо збережені облікові дані
             delete_credentials()
-            
+
             # Запитуємо нові облікові дані
             print_info("Спробуйте ввести інші облікові дані:")
             username, password = prompt_credentials(with_domain=True)
-            
+
             if username and password:
                 # Формуємо новий рядок підключення
                 new_connection_string = f"Provider=MSOLAP;Data Source={os.getenv('OLAP_SERVER')};Initial Catalog={os.getenv('OLAP_DATABASE')};"
                 new_connection_string += f"User ID={username};Password={password};Persist Security Info=True;Update Isolation Level=2;"
-                
+
                 # Оновлюємо дані автентифікації
                 new_auth_details = {
                     "Метод автентифікації": "Логін/пароль",
                     "Користувач": username,
                     "Пароль": "********",  # Заміна для безпеки
                 }
-                
+
                 # Спробуємо підключитися знову (без рекурсії)
-                print_info("Спроба повторного підключення з новими обліковими даними...")
+                print_info(
+                    "Спроба повторного підключення з новими обліковими даними..."
+                )
                 return connect_to_olap(
                     new_connection_string,
                     new_auth_details,
                     retry_count=retry_count - 1,
                 )
         else:
-            print_info("Рекомендація: Спробуйте змінити OLAP_AUTH_METHOD=LOGIN у файлі .env та перезапустіть програму")
+            print_info(
+                "Рекомендація: Спробуйте змінити OLAP_AUTH_METHOD=LOGIN у файлі .env та перезапустіть програму"
+            )
     elif "provider" in str(e).lower():
         # Обробка помилок, пов'язаних з провайдером
         if is_oledb:
             print_warning("Можлива причина: Проблеми з провайдером MSOLAP")
             print_info("Рекомендації:")
-            print(f"   {Fore.CYAN}1. Перевірте наявність встановленого SQL Server або Analysis Services")
+            print(
+                f"   {Fore.CYAN}1. Перевірте наявність встановленого SQL Server або Analysis Services"
+            )
             print(f"   {Fore.CYAN}2. Перевірте версію провайдера MSOLAP")
         else:
             print_warning("Можлива причина: Проблеми з провайдером")
             print_info("Рекомендації:")
             if "ADOMD" in str(e):
-                print(f"   {Fore.CYAN}1. Перевірте шлях до ADOMD.NET у змінній ADOMD_DLL_PATH у файлі .env")
-                print(f"   {Fore.CYAN}2. Встановіть або перевстановіть Microsoft SQL Server Management Studio")
+                print(
+                    f"   {Fore.CYAN}1. Перевірте шлях до ADOMD.NET у змінній ADOMD_DLL_PATH у файлі .env"
+                )
+                print(
+                    f"   {Fore.CYAN}2. Встановіть або перевстановіть Microsoft SQL Server Management Studio"
+                )
             else:
-                print(f"   {Fore.CYAN}1. Перевірте наявність встановленого SQL Server або Analysis Services")
+                print(
+                    f"   {Fore.CYAN}1. Перевірте наявність встановленого SQL Server або Analysis Services"
+                )
                 print(f"   {Fore.CYAN}2. Спробуйте інший метод автентифікації")
     elif "Data Source" in str(e) or "сервер" in str(e).lower():
         # Обробка помилок, пов'язаних з сервером
-        print_warning("Можлива причина: Неправильна адреса сервера або сервер недоступний")
+        print_warning(
+            "Можлива причина: Неправильна адреса сервера або сервер недоступний"
+        )
         print_info("Рекомендації:")
         print(f"   {Fore.CYAN}1. Перевірте значення OLAP_SERVER у файлі .env")
-        print(f"   {Fore.CYAN}2. Перевірте, чи доступний сервер {os.getenv('OLAP_SERVER')} з вашої мережі")
+        print(
+            f"   {Fore.CYAN}2. Перевірте, чи доступний сервер {os.getenv('OLAP_SERVER')} з вашої мережі"
+        )
         print(f"   {Fore.CYAN}3. Спробуйте виконати ping {os.getenv('OLAP_SERVER')}")
     elif "SSPI" in str(e):
         # Обробка помилок, пов'язаних з Windows-автентифікацією
         print_warning("Можлива причина: Проблеми з Windows-автентифікацією")
         print_info("Рекомендації:")
-        print(f"   {Fore.CYAN}1. Змініть метод автентифікації на LOGIN та вкажіть логін і пароль у файлі .env")
-        print(f"   {Fore.CYAN}2. Перевірте, чи має ваш користувач {get_current_windows_user()} доступ до OLAP-кубу")
-    
+        print(
+            f"   {Fore.CYAN}1. Змініть метод автентифікації на LOGIN та вкажіть логін і пароль у файлі .env"
+        )
+        print(
+            f"   {Fore.CYAN}2. Перевірте, чи має ваш користувач {get_current_windows_user()} доступ до OLAP-кубу"
+        )
+
     # Вивід технічних деталей для відладки
     print_info("Технічні деталі для відладки:")
     # Безпечне відображення рядка підключення (маскування пароля)
     safe_connection_string = connection_string
-    if os.getenv('OLAP_PASSWORD'):
-        safe_connection_string = connection_string.replace(os.getenv('OLAP_PASSWORD', ''), '********')
+    if os.getenv("OLAP_PASSWORD"):
+        safe_connection_string = connection_string.replace(
+            os.getenv("OLAP_PASSWORD", ""), "********"
+        )
     print(f"   {Fore.CYAN}Рядок підключення: {Fore.WHITE}{safe_connection_string}")
-    
+
     # Повертаємо None, якщо не вдалося обробити помилку
     return None
 
@@ -1396,9 +1424,11 @@ def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
         return connection
     except Exception as e:
         print_tech_error(f"Помилка підключення до OLAP сервера", e)
-        
+
         # Використовуємо функцію обробки помилок автентифікації
-        return handle_auth_error(e, auth_method, retry_count, connection_string, auth_details, is_oledb=False)
+        return handle_auth_error(
+            e, auth_method, retry_count, connection_string, auth_details, is_oledb=False
+        )
 
 
 # Функція для виконання MDX-запиту і отримання результатів
