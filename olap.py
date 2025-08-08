@@ -448,20 +448,47 @@ auth_username = None  # Зберігає ім'я користувача післ
 AUTH_SSPI = "SSPI"
 AUTH_LOGIN = "LOGIN"
 
-# Додаємо шлях до .NET бібліотек з .env
+# .NET ініціалізація з валідацією ADOMD_DLL_PATH
 adomd_dll_path = os.getenv("ADOMD_DLL_PATH")
-sys.path.append(adomd_dll_path)
+try:
+    if adomd_dll_path:
+        try:
+            sys.path.append(adomd_dll_path)
+        except Exception as e:
+            print(
+                f"[INIT] Попередження: Не вдалося додати ADOMD_DLL_PATH до sys.path: {e}"
+            )
+        # Додаткова діагностика наявності каталогу
+        try:
+            adomd_path_obj = Path(adomd_dll_path)
+            if not adomd_path_obj.exists():
+                print(
+                    "[INIT] Попередження: Шлях до ADOMD.NET не знайдено. Перевірте ADOMD_DLL_PATH у .env"
+                )
+        except Exception:
+            pass
+    else:
+        print("[INIT] Попередження: Змінна ADOMD_DLL_PATH не задана. Перевірте .env")
 
-# Завантажуємо необхідні .NET збірки
-clr.AddReference("Microsoft.AnalysisServices.AdomdClient")
-clr.AddReference("System.Data")  # Додаємо посилання на System.Data для OleDbConnection
+    # Завантажуємо необхідні .NET збірки
+    clr.AddReference("Microsoft.AnalysisServices.AdomdClient")
+    clr.AddReference(
+        "System.Data"
+    )  # Додаємо посилання на System.Data для OleDbConnection
 
-# Імпортуємо необхідні .NET класи
-from Microsoft.AnalysisServices.AdomdClient import AdomdConnection  # type: ignore
-from System.Data.OleDb import OleDbConnection, OleDbCommand, OleDbDataReader  # type: ignore
+    # Імпортуємо необхідні .NET класи
+    from Microsoft.AnalysisServices.AdomdClient import AdomdConnection  # type: ignore
+    from System.Data.OleDb import OleDbConnection, OleDbCommand, OleDbDataReader  # type: ignore
 
-# Використовуємо pyadomd для підключення до OLAP через ADOMD.NET
-from pyadomd import Pyadomd
+    # Використовуємо pyadomd для підключення до OLAP через ADOMD.NET
+    from pyadomd import Pyadomd
+except Exception as e:
+    # Мінімізуємо ризик падіння через невдалі імпорти .NET
+    print(f"[INIT] Помилка ініціалізації .NET провайдерів/бібліотек: {e}")
+    Pyadomd = None  # type: ignore
+    OleDbConnection = None  # type: ignore
+    OleDbCommand = None  # type: ignore
+    OleDbDataReader = None  # type: ignore
 
 
 # Функція для отримання імені поточного користувача Windows
@@ -516,7 +543,7 @@ def print_info_detail(text, details=None):
         text (str): Основне повідомлення
         details (dict, optional): Словник з деталями у форматі ключ-значення
     """
-    print(f"{Fore.GREEN}[{get_current_time()}] ℹ️ {text}")
+    print(f"{Fore.GREEN}[{get_current_time()}] ℹ  {text}")
 
     if details:
         for key, value in details.items():
@@ -535,7 +562,7 @@ def print_tech_error(text, error_obj=None):
         text (str): Основне повідомлення про помилку
         error_obj (Exception, optional): Об'єкт виключення для виводу деталей
     """
-    print(f"{Fore.RED}[{get_current_time()}] 🛑 {text}")
+    print(f"{Fore.RED}[{get_current_time()}] 🛑  {text}")
 
     if error_obj:
         error_type = type(error_obj).__name__
@@ -559,27 +586,27 @@ def print_tech_error(text, error_obj=None):
 
 # Функція для виводу інформаційних повідомлень
 def print_info(text):
-    print(f"{Fore.GREEN}[{get_current_time()}] ℹ️ {text}")
+    print(f"{Fore.GREEN}[{get_current_time()}] ℹ  {text}")
 
 
 # Функція для виводу попереджень
 def print_warning(text):
-    print(f"{Fore.YELLOW}[{get_current_time()}] ⚠️ {text}")
+    print(f"{Fore.YELLOW}[{get_current_time()}] ⚠  {text}")
 
 
 # Функція для виводу помилок
 def print_error(text):
-    print(f"{Fore.RED}[{get_current_time()}] ❌ {text}")
+    print(f"{Fore.RED}[{get_current_time()}] ❌  {text}")
 
 
 # Функція для виводу успішних операцій
 def print_success(text):
-    print(f"{Fore.GREEN}[{get_current_time()}] ✅ {text}")
+    print(f"{Fore.GREEN}[{get_current_time()}] ✅  {text}")
 
 
 # Функція для виводу прогресу
 def print_progress(text):
-    print(f"{Fore.BLUE}[{get_current_time()}] 🔄 {text}")
+    print(f"{Fore.BLUE}[{get_current_time()}] 🔄  {text}")
 
 
 # Функція для форматування часу у вигляді години:хвилини:секунди
@@ -860,6 +887,9 @@ def loading_spinner(description, estimated_time=None):
 
     # Початковий час для відображення тривалості
     start_time = time.time()
+    message = (
+        ""  # fallback, щоб уникнути UnboundLocalError при дуже швидкому завершенні
+    )
 
     # Відображаємо анімацію поки вона активна
     while animation_running:
@@ -1119,7 +1149,7 @@ class OleDbCursor:
         self.command = None
 
     def execute(self, query):
-        """Виконує MDX запит"""
+        """Виконує DAX запит"""
         self.command = OleDbCommand(query, self.connection)
         self.reader = self.command.ExecuteReader()
 
@@ -1431,9 +1461,9 @@ def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
         )
 
 
-# Функція для виконання MDX-запиту і отримання результатів
-def run_mdx_query(connection, reporting_period):
-    """Виконує MDX-запит для заданого періоду і повертає результати"""
+# Функція для виконання DAX-запиту і отримання результатів
+def run_dax_query(connection, reporting_period):
+    """Виконує DAX-запит для заданого періоду і повертає результати"""
     # Парсимо період (формат РРРР-ТТ)
     try:
         year_num, week_num = map(int, reporting_period.split("-"))
@@ -1445,6 +1475,8 @@ def run_mdx_query(connection, reporting_period):
 
     # Отримуємо фільтр для запиту
     filter_fg1_name = os.getenv("FILTER_FG1_NAME")
+    # Екрануємо подвійні лапки для безпечної підстановки в DAX
+    escaped_filter_fg1 = (filter_fg1_name or "").replace('"', '""')
 
     # Формуємо шлях для збереження результатів
     result_dir = Path("result")
@@ -1459,12 +1491,12 @@ def run_mdx_query(connection, reporting_period):
     filepath = year_dir / filename
 
     # Виводимо інформацію про запит
-    print_info(f"Формування MDX запиту з параметрами:")
+    print_info(f"Формування DAX запиту з параметрами:")
     print(f"   {Fore.CYAN}Рік:      {Fore.WHITE}{year_num}")
     print(f"   {Fore.CYAN}Тиждень:  {Fore.WHITE}{week_num}")
     print(f"   {Fore.CYAN}Фільтр:   {Fore.WHITE}{filter_fg1_name}")
 
-    # Формуємо запит із використанням змінних для року та тижня
+    # Формуємо DAX-запит із використанням змінних для року та тижня
     query = f"""
     /* START QUERY BUILDER */
     EVALUATE
@@ -1494,7 +1526,7 @@ def run_mdx_query(connection, reporting_period):
         Promo[basis],
         KEEPFILTERS( TREATAS( {{{year_num}}}, 'Calendar'[year_num] )),
         KEEPFILTERS( TREATAS( {{{week_num}}}, 'Calendar'[week_num] )),
-        KEEPFILTERS( TREATAS( {{"{filter_fg1_name}"}}, Goods[fg1_name] )),
+        KEEPFILTERS( TREATAS( {{"{escaped_filter_fg1}"}}, Goods[fg1_name] )),
         "Реалізація, к-сть", [sell_qty],
         "Реалізація, грн.", [sell_amount_nds],
         "Реалізація ЦЗ, грн.", [buy_amount_nds],
@@ -1560,7 +1592,92 @@ def run_mdx_query(connection, reporting_period):
         spinner_thread.start()
 
         try:
-            # Отримуємо всі рядки відразу
+            # Визначаємо формат експорту заздалегідь
+            export_format = os.getenv("EXPORT_FORMAT", "XLSX").upper()
+
+            # Якщо потрібен лише CSV — виконуємо потоковий експорт без завантаження всіх даних у пам'ять
+            if export_format == "CSV":
+                # Готуємо шлях для CSV
+                csv_path = year_dir / f"{year_num}-{week_num:02d}.csv"
+
+                # Налаштування CSV
+                delimiter = os.getenv("CSV_DELIMITER", ";")
+                encoding = os.getenv("CSV_ENCODING", "utf-8-sig")
+                quoting_mode = os.getenv("CSV_QUOTING", "minimal").lower()
+                if quoting_mode == "all":
+                    quoting = csv.QUOTE_ALL
+                elif quoting_mode == "nonnumeric":
+                    quoting = csv.QUOTE_NONNUMERIC
+                else:
+                    quoting = csv.QUOTE_MINIMAL
+
+                # Побудова заголовків із перейменуванням як у режимі DataFrame
+                raw_columns = [desc[0] for desc in cursor.description]
+                renamed_columns = []
+                potential_names = {}
+                # Перший прохід
+                for col in raw_columns:
+                    match = re.match(r"(\w+)\[([^\]]+)\]", col)
+                    if match:
+                        column_name = match.group(2)
+                        potential_names[column_name] = (
+                            False if column_name in potential_names else True
+                        )
+                    else:
+                        column_name = col.strip("[]")
+                        potential_names[column_name] = (
+                            False if column_name in potential_names else True
+                        )
+                # Другий прохід
+                for col in raw_columns:
+                    match = re.match(r"(\w+)\[([^\]]+)\]", col)
+                    if match:
+                        column_name = match.group(2)
+                        if potential_names.get(column_name, True):
+                            renamed_columns.append(column_name)
+                        else:
+                            renamed_columns.append(col)
+                    else:
+                        renamed_columns.append(col.strip("[]"))
+
+                # Пишемо CSV потоково
+                row_count = 0
+                with open(csv_path, "w", encoding=encoding, newline="") as f:
+                    writer = csv.writer(f, delimiter=delimiter, quoting=quoting)
+                    writer.writerow(renamed_columns)
+
+                    while True:
+                        row = cursor.fetchone()
+                        if row is None:
+                            break
+                        converted_row = []
+                        for val in row:
+                            py_val = convert_dotnet_to_python(val)
+                            if isinstance(py_val, float) and (
+                                math.isnan(py_val) or math.isinf(py_val)
+                            ):
+                                py_val = None
+                            converted_row.append(py_val)
+                        writer.writerow(converted_row)
+                        row_count += 1
+
+                # Зупиняємо анімацію
+                animation_running = False
+                spinner_thread.join(timeout=1.0)
+
+                # Логи про виконання
+                query_end_time = time.time()
+                query_duration = query_end_time - query_start_time
+                print_success(
+                    f"Запит виконано за {format_time(query_duration)}. Отримано {row_count} рядків даних."
+                )
+                print_success(
+                    f"Дані експортовано у файл: {Fore.WHITE}{str(csv_path)} {Fore.YELLOW}(рядків: {row_count})"
+                )
+                cursor.close()
+                return str(csv_path)
+
+            # Інакше — завантажуємо всі рядки і працюємо через DataFrame
             rows = cursor.fetchall()
             # Зупиняємо анімацію
             animation_running = False
@@ -1666,7 +1783,7 @@ def run_mdx_query(connection, reporting_period):
             # Застосовуємо нові назви стовпців
             df.rename(columns=renamed_columns, inplace=True)
 
-            # Визначаємо формат експорту з .env
+            # Визначаємо формат експорту з .env (може бути XLSX або BOTH, бо CSV-only вже оброблено)
             export_format = os.getenv("EXPORT_FORMAT", "XLSX").upper()
 
             # Перевіряємо, що формат правильний (XLSX, CSV або BOTH)
@@ -1753,7 +1870,7 @@ def run_mdx_query(connection, reporting_period):
                 # Повертаємо розмір файлу
                 return Path(file_path_str).stat().st_size
 
-            # Функція для експорту в CSV
+            # Функція для експорту в CSV (через DataFrame)
             def export_to_csv(file_path):
                 print_progress(f"Експорт даних у CSV-файл {file_path}...")
 
@@ -1902,7 +2019,7 @@ def countdown_timer(seconds):
         # Форматуємо час, що залишився
         time_left = format_time(remaining)
         sys.stdout.write(
-            f"\r{Fore.YELLOW}[{get_current_time()}] ⏱️ Очікування: залишилось {time_left}..."
+            f"\r{Fore.YELLOW}[{get_current_time()}] ⏱  Очікування: залишилось {time_left}..."
         )
         sys.stdout.flush()
         time.sleep(1)
@@ -2050,7 +2167,7 @@ try:
         print_info(f"Обробка тижня: {reporting_period} ({i+1}/{len(year_week_pairs)})")
 
         # Виконуємо запит і отримуємо результати
-        file_path = run_mdx_query(connection, reporting_period)
+        file_path = run_dax_query(connection, reporting_period)
 
         # Додаємо шлях до файлу до списку створених файлів
         if file_path:
