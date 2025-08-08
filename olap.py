@@ -543,7 +543,7 @@ def print_info_detail(text, details=None):
         text (str): Основне повідомлення
         details (dict, optional): Словник з деталями у форматі ключ-значення
     """
-    print(f"{Fore.GREEN}[{get_current_time()}] ℹ  {text}")
+    print(f"{Fore.GREEN}[{get_current_time()}] ℹ️  {text}")
 
     if details:
         for key, value in details.items():
@@ -562,7 +562,7 @@ def print_tech_error(text, error_obj=None):
         text (str): Основне повідомлення про помилку
         error_obj (Exception, optional): Об'єкт виключення для виводу деталей
     """
-    print(f"{Fore.RED}[{get_current_time()}] 🛑  {text}")
+    print(f"{Fore.RED}[{get_current_time()}] 🛑 {text}")
 
     if error_obj:
         error_type = type(error_obj).__name__
@@ -586,27 +586,27 @@ def print_tech_error(text, error_obj=None):
 
 # Функція для виводу інформаційних повідомлень
 def print_info(text):
-    print(f"{Fore.GREEN}[{get_current_time()}] ℹ  {text}")
+    print(f"{Fore.GREEN}[{get_current_time()}] ℹ️  {text}")
 
 
 # Функція для виводу попереджень
 def print_warning(text):
-    print(f"{Fore.YELLOW}[{get_current_time()}] ⚠  {text}")
+    print(f"{Fore.YELLOW}[{get_current_time()}] ⚠️  {text}")
 
 
 # Функція для виводу помилок
 def print_error(text):
-    print(f"{Fore.RED}[{get_current_time()}] ❌  {text}")
+    print(f"{Fore.RED}[{get_current_time()}] ❌ {text}")
 
 
 # Функція для виводу успішних операцій
 def print_success(text):
-    print(f"{Fore.GREEN}[{get_current_time()}] ✅  {text}")
+    print(f"{Fore.GREEN}[{get_current_time()}] ✅ {text}")
 
 
 # Функція для виводу прогресу
 def print_progress(text):
-    print(f"{Fore.BLUE}[{get_current_time()}] 🔄  {text}")
+    print(f"{Fore.BLUE}[{get_current_time()}] 🔄 {text}")
 
 
 # Функція для форматування часу у вигляді години:хвилини:секунди
@@ -2019,7 +2019,7 @@ def countdown_timer(seconds):
         # Форматуємо час, що залишився
         time_left = format_time(remaining)
         sys.stdout.write(
-            f"\r{Fore.YELLOW}[{get_current_time()}] ⏱  Очікування: залишилось {time_left}..."
+            f"\r{Fore.YELLOW}[{get_current_time()}] ⏱️  Очікування: залишилось {time_left}..."
         )
         sys.stdout.flush()
         time.sleep(1)
@@ -2095,9 +2095,9 @@ try:
     # Виводимо інформацію про параметри запуску
     print_header(f"OLAP ЕКСПОРТ ДАНИХ - ПОЧАТОК РОБОТИ")
     print_info(f"Налаштування:")
-    print(f"   {Fore.CYAN}OLAP сервер:  {Fore.WHITE}{os.getenv('OLAP_SERVER')}")
-    print(f"   {Fore.CYAN}База даних:   {Fore.WHITE}{os.getenv('OLAP_DATABASE')}")
-    print(f"   {Fore.CYAN}Фільтр:       {Fore.WHITE}{filter_fg1_name}")
+    print(f"   {Fore.CYAN}OLAP сервер:    {Fore.WHITE}{os.getenv('OLAP_SERVER')}")
+    print(f"   {Fore.CYAN}База даних:     {Fore.WHITE}{os.getenv('OLAP_DATABASE')}")
+    print(f"   {Fore.CYAN}Фільтр:         {Fore.WHITE}{filter_fg1_name}")
 
     # Додаємо інформацію про метод автентифікації
     auth_method = os.getenv("OLAP_AUTH_METHOD", AUTH_SSPI).upper()
@@ -2119,16 +2119,16 @@ try:
     # Виводимо інформацію про періоди
     if start_period and end_period:
         print(
-            f"   {Fore.CYAN}Період:       {Fore.WHITE}з {start_period} по {end_period}"
+            f"   {Fore.CYAN}Період:         {Fore.WHITE}з {start_period} по {end_period}"
         )
         print(f"   {Fore.CYAN}Кількість періодів: {Fore.WHITE}{len(year_week_pairs)}")
     else:
         print(f"   {Fore.CYAN}Рік:          {Fore.WHITE}{year_num}")
         print(
-            f"   {Fore.CYAN}Тижні:        {Fore.WHITE}{', '.join(map(str, week_nums))}"
+            f"   {Fore.CYAN}Тижні:          {Fore.WHITE}{', '.join(map(str, week_nums))}"
         )
 
-    print(f"   {Fore.CYAN}Таймаут:      {Fore.WHITE}{query_timeout} секунд")
+    print(f"   {Fore.CYAN}Таймаут:        {Fore.WHITE}{query_timeout} секунд")
 
     # Початок відліку часу
     start_time = time.time()
@@ -2195,12 +2195,12 @@ try:
             f"   {Fore.CYAN}Загальний час:    {Fore.WHITE}{format_time(processing_time)}"
         )
         print(
-            f"   {Fore.CYAN}Середній час: {Fore.WHITE}{format_time(avg_time_per_week)}"
+            f"   {Fore.CYAN}Середній час:    {Fore.WHITE}{format_time(avg_time_per_week)}"
         )
         if time_tracker.elapsed_times:
             min_time = min(time_tracker.elapsed_times)
             max_time = max(time_tracker.elapsed_times)
-            print(f"   {Fore.CYAN}Мінімальний час: {Fore.WHITE}{format_time(min_time)}")
+            print(f"   {Fore.CYAN}Мінімальний час:  {Fore.WHITE}{format_time(min_time)}")
             print(
                 f"   {Fore.CYAN}Максимальний час: {Fore.WHITE}{format_time(max_time)}"
             )
