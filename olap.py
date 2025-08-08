@@ -159,6 +159,65 @@ def generate_encryption_key(password, salt=None):
     return key, salt
 
 
+def get_master_password():
+    """
+    Повертає майстер-пароль для шифрування (якщо увімкнено через .env).
+
+    Пріоритет:
+      1) OLAP_MASTER_PASSWORD з .env
+      2) Інтерактивний запит, якщо OLAP_USE_MASTER_PASSWORD=true
+      3) None, якщо опція вимкнена або пароль не задано
+    """
+    use_master = os.getenv("OLAP_USE_MASTER_PASSWORD", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    if not use_master:
+        return None
+
+    master_env = os.getenv("OLAP_MASTER_PASSWORD")
+    if master_env:
+        return master_env
+
+    try:
+        # Інтерактивний запит лише якщо є TTY
+        if sys.stdin and sys.stdin.isatty():
+            mp = getpass.getpass(
+                f"{Fore.CYAN}Введіть майстер‑пароль для шифрування (залиште порожнім, щоб пропустити): {Fore.RESET}"
+            )
+            return mp if mp else None
+    except Exception:
+        pass
+    return None
+
+
+def secure_credentials_file(file_path: Path):
+    """
+    Намагається посилити права доступу до файлу з обліковими даними.
+
+    - На Windows: використовує icacls для видачі прав лише поточному користувачу
+    - На інших ОС: зберігає chmod 600 як запасний варіант
+    """
+    try:
+        if os.name == "nt":
+            import subprocess
+
+            # Вимикаємо наслідування ACL та видаємо повний доступ тільки поточному користувачу
+            cmd = f'icacls "{str(file_path)}" /inheritance:r /grant:r "{os.getenv("USERNAME", "")}":F /C'
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if result.returncode != 0:
+                print_warning(
+                    f"Не вдалося застосувати ACL через icacls: {result.stderr.strip()}"
+                )
+        else:
+            import stat
+
+            os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+    except Exception as e:
+        print_warning(f"Не вдалося посилити права доступу до файлу: {e}")
+
+
 def encrypt_credentials(username, password, encryption_key):
     """
     Шифрує облікові дані користувача
@@ -230,10 +289,14 @@ def save_credentials(username, password, encrypted=False):
     try:
         # Якщо потрібно шифрувати дані
         if encrypted:
-            # Використовуємо унікальний ідентифікатор пристрою для ключа
+            # Використовуємо унікальний ідентифікатор пристрою та опційний майстер‑пароль для ключа
             machine_id = get_machine_id()
+            master_password = get_master_password()
+            base_secret = (
+                f"{machine_id}:{master_password}" if master_password else machine_id
+            )
             # Генеруємо ключ шифрування
-            key, salt = generate_encryption_key(machine_id)
+            key, salt = generate_encryption_key(base_secret)
             # Шифруємо дані
             encrypted_data = encrypt_credentials(username, password, key)
 
@@ -252,14 +315,8 @@ def save_credentials(username, password, encrypted=False):
                 f.write(f"{username}:{password}")
 
         # Змінюємо права доступу до файлу (тільки для поточного користувача)
-        try:
-            import stat
-
-            os.chmod(credentials_file, stat.S_IRUSR | stat.S_IWUSR)
-        except Exception as e:
-            print_warning(
-                f"Не вдалося змінити права доступу до файлу облікових даних: {e}"
-            )
+        # Посилюємо права доступу до файлу
+        secure_credentials_file(credentials_file)
 
         # Зберігаємо ім'я користувача для подальшого використання
         auth_username = username
@@ -302,24 +359,50 @@ def load_credentials(encrypted=False):
 
                 salt, encrypted_data = content
 
-                # Використовуємо унікальний ідентифікатор пристрою замість запиту паролю
+                # Побудова секрету: machine_id [+ майстер‑пароль]
                 machine_id = get_machine_id()
+                master_password = get_master_password()
+                base_secret = (
+                    f"{machine_id}:{master_password}" if master_password else machine_id
+                )
 
-                # Генеруємо ключ шифрування на основі унікального ідентифікатора пристрою
-                key, _ = generate_encryption_key(machine_id, salt)
+                # Генеруємо ключ шифрування
+                key, _ = generate_encryption_key(base_secret, salt)
 
                 # Розшифровуємо дані
                 username, password = decrypt_credentials(encrypted_data, key)
 
+                # Якщо не вдалося, а використання майстер‑пароля увімкнено — спробуємо одноразово запросити його
+                if (not username or not password) and (
+                    os.getenv("OLAP_USE_MASTER_PASSWORD", "false").lower()
+                    in ("true", "1", "yes")
+                ) and not os.getenv("OLAP_MASTER_PASSWORD"):
+                    try:
+                        if sys.stdin and sys.stdin.isatty():
+                            mp = getpass.getpass(
+                                f"{Fore.CYAN}Введіть майстер‑пароль для розшифрування: {Fore.RESET}"
+                            )
+                            base_secret_retry = (
+                                f"{machine_id}:{mp}" if mp else machine_id
+                            )
+                            key_retry, _ = generate_encryption_key(
+                                base_secret_retry, salt
+                            )
+                            username, password = decrypt_credentials(
+                                encrypted_data, key_retry
+                            )
+                    except Exception:
+                        pass
+
                 if username and password:
                     print_info(
-                        f"Облікові дані успішно розшифровано з використанням унікального ідентифікатора пристрою"
+                        f"Облікові дані успішно розшифровано"
                     )
                     auth_username = username  # Зберігаємо ім'я користувача для подальшого використання
                     return username, password
                 else:
                     print_error(
-                        "Не вдалося розшифрувати облікові дані. Можливо файл пошкоджено або дані були зашифровані на іншому комп'ютері."
+                        "Не вдалося розшифрувати облікові дані. Переконайтеся, що ви використовуєте правильну конфігурацію OLAP_USE_MASTER_PASSWORD та майстер‑пароль."
                     )
                     return None, None
         else:
@@ -1120,18 +1203,9 @@ def connect_using_oledb(connection_string, auth_details):
 
         return connection, cursor
     except Exception as e:
+        # Явний збій OleDb: повертаємо None і даємо можливість вищому рівню керувати retry
         print_tech_error(f"Помилка підключення до OLAP сервера через OleDb", e)
-
-        # Визначаємо метод автентифікації
-        auth_method = os.getenv("OLAP_AUTH_METHOD", AUTH_SSPI).upper()
-
-        # Використовуємо функцію обробки помилок автентифікації
-        connection_result = handle_auth_error(
-            e, auth_method, 1, connection_string, auth_details, is_oledb=True
-        )
-
-        # Якщо handle_auth_error поверне None (не обробив помилку), повертаємо None, None
-        return (connection_result, None) if connection_result else (None, None)
+        return None, None
 
 
 # Клас-обгортка для забезпечення сумісності OleDb з іншим кодом
@@ -1179,11 +1253,17 @@ class OleDbCursor:
         while self.reader.Read():
             row = []
             for i in range(self.reader.FieldCount):
-                # Конвертуємо .NET об'єкти в Python
+                # Конвертуємо .NET об'єкти в Python, явно обробляючи DBNull
                 value = self.reader.GetValue(i)
-                # Конвертуємо DBNull в None
-                if value is None or str(value) == "System.DBNull":
-                    value = None
+                try:
+                    import System  # type: ignore
+
+                    if value is None or isinstance(value, System.DBNull):
+                        value = None
+                except Exception:
+                    # Запасний варіант
+                    if value is None or str(value) == "System.DBNull":
+                        value = None
                 row.append(value)
             rows.append(row)
 
@@ -1198,8 +1278,14 @@ class OleDbCursor:
         row = []
         for i in range(self.reader.FieldCount):
             value = self.reader.GetValue(i)
-            if value is None or str(value) == "System.DBNull":
-                value = None
+            try:
+                import System  # type: ignore
+
+                if value is None or isinstance(value, System.DBNull):
+                    value = None
+            except Exception:
+                if value is None or str(value) == "System.DBNull":
+                    value = None
             row.append(value)
 
         return row
@@ -1351,59 +1437,50 @@ def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
                 connection_string, auth_details
             )
 
-            if oledb_connection:
-                # Створюємо обгортку для сумісності з іншими функціями
-                connection_wrapper = type(
-                    "OleDbConnectionWrapper",
-                    (),
-                    {
-                        "cursor": lambda self: cursor,
-                        "close": lambda self: oledb_connection.Close(),
-                        "_oledb_connection": oledb_connection,  # Зберігаємо посилання на оригінальне підключення
-                    },
-                )
-                return connection_wrapper()
+            if oledb_connection and cursor:
+                # Єдиний уніфікований інтерфейс з'єднання
+                class OleDbConnectionWrapper:
+                    def __init__(self, conn, cur):
+                        self._conn = conn
+                        self._cursor = cur
 
-            # Якщо OleDb підключення не вдалося, і ми використовуємо LOGIN автентифікацію,
-            # можливо, логін або пароль некоректні
-            if auth_method == AUTH_LOGIN and retry_count > 0:
-                print_warning("Не вдалося підключитися з поточними обліковими даними")
+                    def cursor(self):
+                        return self._cursor
 
-                # Видаляємо збережені облікові дані
+                    def close(self):
+                        try:
+                            # Закриваємо reader/command через курсор
+                            self._cursor.close()
+                        except Exception:
+                            pass
+                        try:
+                            self._conn.Close()
+                        except Exception:
+                            pass
+
+                return OleDbConnectionWrapper(oledb_connection, cursor)
+
+            # Якщо OleDb підключення не вдалося, і є retry — робимо повторну спробу тільки тут
+            if retry_count > 0:
+                print_warning("Не вдалося підключитися через OleDb. Повторна спроба...")
                 delete_credentials()
-
-                # Запитуємо нові облікові дані
                 username, password = prompt_credentials(with_domain=True)
-
                 if username and password:
-                    # Формуємо новий рядок підключення
-                    new_connection_string = f"Provider=MSOLAP;Data Source={os.getenv('OLAP_SERVER')};Initial Catalog={os.getenv('OLAP_DATABASE')};"
-                    new_connection_string += f"User ID={username};Password={password};Persist Security Info=True;Update Isolation Level=2;"
-
-                    # Оновлюємо дані автентифікації
+                    new_connection_string = (
+                        f"Provider=MSOLAP;Data Source={os.getenv('OLAP_SERVER')};Initial Catalog={os.getenv('OLAP_DATABASE')};"
+                        f"User ID={username};Password={password};Persist Security Info=True;Update Isolation Level=2;"
+                    )
                     new_auth_details = {
                         "Метод автентифікації": "Логін/пароль",
                         "Користувач": username,
-                        "Пароль": "********",  # Заміна для безпеки
+                        "Пароль": "********",
                     }
-
-                    # Спробуємо підключитися знову (без рекурсії)
-                    print_info(
-                        "Спроба повторного підключення з новими обліковими даними..."
-                    )
                     return connect_to_olap(
-                        new_connection_string,
-                        new_auth_details,
-                        retry_count=retry_count - 1,
+                        new_connection_string, new_auth_details, retry_count=retry_count - 1
                     )
 
-            # Якщо OleDb підключення не вдалося, повідомляємо про помилку
-            print_error(
-                "Не вдалося встановити підключення для LOGIN автентифікації. Перевірте параметри підключення."
-            )
-            print_warning(
-                "Спробуємо використати ADOMD.NET, але автентифікація за логіном/паролем може не спрацювати."
-            )
+            print_error("Не вдалося встановити підключення через OleDb після повторних спроб")
+            return None
 
         # В інших випадках використовуємо ADOMD.NET (працює добре для Windows-автентифікації)
         # Створюємо нові деталі автентифікації для ADOMD на основі Windows
@@ -1446,6 +1523,10 @@ def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
                 print_info(f"Знайдено ADOMD.NET файли: {', '.join(adomd_files)}")
             else:
                 print_warning("У вказаному каталозі не знайдено файлів ADOMD.NET!")
+
+        if Pyadomd is None:
+            print_error("Pyadomd не ініціалізовано. Перевірте ADOMD_DLL_PATH та наявність бібліотек.")
+            return None
 
         connection = Pyadomd(connection_string)
         connection.open()
@@ -1804,11 +1885,16 @@ def run_dax_query(connection, reporting_period):
                 # Переконуємося, що шлях є строкою (необхідно для xlsxwriter)
                 file_path_str = str(file_path)
 
-                # Створюємо Excel-файл за допомогою XlsxWriter
+                # Потоковий режим: дозволяє писати рядками без збереження у DataFrame
+                streaming = os.getenv("XLSX_STREAMING", "false").lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                )
+
                 workbook = xlsxwriter.Workbook(file_path_str)
                 worksheet = workbook.add_worksheet(f"{year_num}-{week_num:02d}")
 
-                # Налаштування стилів для заголовків з .env (залишаємо тільки заголовки)
                 header_format = workbook.add_format(
                     {
                         "bold": True,
@@ -1823,30 +1909,38 @@ def run_dax_query(connection, reporting_period):
                     }
                 )
 
-                # Додаємо заголовки
-                for col_num, column_name in enumerate(df.columns):
-                    worksheet.write(0, col_num, column_name, header_format)
+                # Заголовки одним викликом write_row
+                worksheet.write_row(0, 0, list(df.columns), header_format)
 
-                # Додаємо дані без форматування
-                for row_num, row_data in enumerate(df.values):
-                    for col_num, cell_value in enumerate(row_data):
-                        # Додаткова перевірка на .NET типи (це зберігаємо для сумісності)
-                        if "System." in str(type(cell_value)):
-                            cell_value = convert_dotnet_to_python(cell_value)
+                # Дані батчами рядків — помітно швидше за клітинка-за-клітинкою
+                if streaming:
+                    # У потоковому режимі будемо читати курсором знову, щоб не дублювати RAM
+                    # (курсор вже був закритий у цьому місці — тож використовуємо наявний df)
+                    for row_idx, row_data in enumerate(df.itertuples(index=False), start=1):
+                        safe_row = []
+                        for cell_value in row_data:
+                            if isinstance(cell_value, float) and (
+                                math.isnan(cell_value) or math.isinf(cell_value)
+                            ):
+                                safe_row.append(None)
+                            else:
+                                safe_row.append(cell_value)
+                        worksheet.write_row(row_idx, 0, safe_row)
+                else:
+                    values = df.values.tolist()
+                    for row_idx, row_data in enumerate(values, start=1):
+                        safe_row = []
+                        for cell_value in row_data:
+                            if isinstance(cell_value, float) and (
+                                math.isnan(cell_value) or math.isinf(cell_value)
+                            ):
+                                safe_row.append(None)
+                            else:
+                                safe_row.append(cell_value)
+                        worksheet.write_row(row_idx, 0, safe_row)
 
-                        # Перевіряємо на NaN/Infinity для чисел з рухомою комою
-                        if isinstance(cell_value, float):
-                            if math.isnan(cell_value) or math.isinf(cell_value):
-                                cell_value = (
-                                    None  # Замінюємо на None (буде пуста клітинка)
-                                )
-
-                        # Записуємо значення без форматування
-                        worksheet.write(row_num + 1, col_num, cell_value)
-
-                # Автоматичне налаштування ширини стовпців
+                # Автоширина стовпців (за даними з df)
                 for col_num, column in enumerate(df.columns):
-                    # Знаходимо максимальну довжину
                     max_length = max(
                         len(str(column)),
                         (
@@ -1855,19 +1949,12 @@ def run_dax_query(connection, reporting_period):
                             else 0
                         ),
                     )
-                    # Встановлюємо ширину з невеликим запасом
-                    column_width = min(
-                        max_length + 2, 100
-                    )  # Обмежуємо максимальну ширину
+                    column_width = min(max_length + 2, 100)
                     worksheet.set_column(col_num, col_num, column_width)
 
-                # Фіксуємо перший рядок (заголовки)
                 worksheet.freeze_panes(1, 0)
-
-                # Зберігаємо файл
                 workbook.close()
 
-                # Повертаємо розмір файлу
                 return Path(file_path_str).stat().st_size
 
             # Функція для експорту в CSV (через DataFrame)
@@ -1909,16 +1996,23 @@ def run_dax_query(connection, reporting_period):
                 # Повертаємо розмір файлу
                 return Path(file_path_str).stat().st_size
 
+            # Користувацький перемикач для вимушеного CSV-only при великих даних
+            force_csv_only = os.getenv("FORCE_CSV_ONLY", "false").lower() in (
+                "true",
+                "1",
+                "yes",
+            )
+
             # Експортуємо дані у вибрані формати
             exported_files = []
 
             # При експорті використовуємо шляхи на основі pathlib.Path
-            if export_xlsx:
+            if export_xlsx and not force_csv_only:
                 xlsx_path = year_dir / f"{year_num}-{week_num:02d}.xlsx"
                 xlsx_size = export_to_xlsx(str(xlsx_path))
                 exported_files.append((str(xlsx_path), xlsx_size))
 
-            if export_csv:
+            if export_csv or force_csv_only:
                 csv_path = year_dir / f"{year_num}-{week_num:02d}.csv"
                 csv_size = export_to_csv(str(csv_path))
                 exported_files.append((str(csv_path), csv_size))
@@ -2028,8 +2122,7 @@ def countdown_timer(seconds):
 
 # Головний код
 try:
-    # Отримуємо параметри з .env файлу
-    load_dotenv()
+    # Отримуємо параметри з .env файлу (вже завантажено на старті)
 
     print_header(f"OLAP ЕКСПОРТ ДАНИХ - НАЛАШТУВАННЯ")
 
