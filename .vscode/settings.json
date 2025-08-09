@@ -5,5 +5,8 @@
     ],
     "python.autoComplete.extraPaths": [
         "${workspaceFolder}/venv/Lib/site-packages"
+    ],
+    "cursorpyright.analysis.extraPaths": [
+        "${workspaceFolder}/venv/Lib/site-packages"
     ]
 } 
