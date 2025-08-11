@@ -5,7 +5,15 @@ import time
 import datetime
 from colorama import Fore
 
-from .utils import print_header, print_info, print_warning, print_error, print_success, format_time, ensure_dir
+from .utils import (
+    print_header,
+    print_info,
+    print_warning,
+    print_error,
+    print_success,
+    format_time,
+    ensure_dir,
+)
 from .connection import connect_to_olap, get_connection_string, AUTH_SSPI
 from .queries import get_available_weeks, generate_year_week_pairs, run_dax_query
 from .auth import delete_credentials, get_current_windows_user, auth_username
@@ -39,9 +47,13 @@ def main(argv: list[str] | None = None) -> int:
     available_weeks = get_available_weeks(connection)
 
     if start_period and end_period:
-        year_week_pairs = generate_year_week_pairs(start_period, end_period, available_weeks)
+        year_week_pairs = generate_year_week_pairs(
+            start_period, end_period, available_weeks
+        )
         if not year_week_pairs:
-            print_error("Не вдалося згенерувати список періодів. Використовуються значення за замовчуванням.")
+            print_error(
+                "Не вдалося згенерувати список періодів. Використовуються значення за замовчуванням."
+            )
             year_num = CURRENT_YEAR
             week_nums = [CURRENT_WEEK]
             year_week_pairs = [(year_num, week) for week in week_nums]
@@ -67,17 +79,25 @@ def main(argv: list[str] | None = None) -> int:
 
     auth_method = os.getenv("OLAP_AUTH_METHOD", AUTH_SSPI).upper()
     if auth_method == AUTH_SSPI:
-        print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Windows (SSPI) як користувач {get_current_windows_user()}")
+        print(
+            f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Windows (SSPI) як користувач {get_current_windows_user()}"
+        )
     else:
         user = auth_username or os.getenv("OLAP_USER", "Невідомий користувач")
-        print(f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Логін/пароль як користувач {user} через OleDbConnection")
+        print(
+            f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Логін/пароль як користувач {user} через OleDbConnection"
+        )
 
     if start_period and end_period:
-        print(f"   {Fore.CYAN}Період:         {Fore.WHITE}з {start_period} по {end_period}")
+        print(
+            f"   {Fore.CYAN}Період:         {Fore.WHITE}з {start_period} по {end_period}"
+        )
         print(f"   {Fore.CYAN}Кількість періодів: {Fore.WHITE}{len(year_week_pairs)}")
     else:
         print(f"   {Fore.CYAN}Рік:          {Fore.WHITE}{year_num}")
-        print(f"   {Fore.CYAN}Тижні:          {Fore.WHITE}{', '.join(map(str, week_nums))}")
+        print(
+            f"   {Fore.CYAN}Тижні:          {Fore.WHITE}{', '.join(map(str, week_nums))}"
+        )
     print(f"   {Fore.CYAN}Таймаут:        {Fore.WHITE}{query_timeout} секунд")
 
     start_time = time.time()
@@ -105,16 +125,26 @@ def main(argv: list[str] | None = None) -> int:
     print_header("ПІДСУМОК ОБРОБКИ")
     if len(year_week_pairs) > 1:
         avg_time_per_week = (
-            sum(time_tracker.elapsed_times) / len(time_tracker.elapsed_times) if time_tracker.elapsed_times else 0
+            sum(time_tracker.elapsed_times) / len(time_tracker.elapsed_times)
+            if time_tracker.elapsed_times
+            else 0
         )
         print_info("Деталі часу виконання:")
-        print(f"   {Fore.CYAN}Загальний час:    {Fore.WHITE}{format_time(processing_time)}")
-        print(f"   {Fore.CYAN}Середній час:    {Fore.WHITE}{format_time(avg_time_per_week)}")
+        print(
+            f"   {Fore.CYAN}Загальний час:    {Fore.WHITE}{format_time(processing_time)}"
+        )
+        print(
+            f"   {Fore.CYAN}Середній час:    {Fore.WHITE}{format_time(avg_time_per_week)}"
+        )
         if time_tracker.elapsed_times:
             min_time = min(time_tracker.elapsed_times)
             max_time = max(time_tracker.elapsed_times)
-            print(f"   {Fore.CYAN}Мінімальний час:  {Fore.WHITE}{format_time(min_time)}")
-            print(f"   {Fore.CYAN}Максимальний час: {Fore.WHITE}{format_time(max_time)}")
+            print(
+                f"   {Fore.CYAN}Мінімальний час:  {Fore.WHITE}{format_time(min_time)}"
+            )
+            print(
+                f"   {Fore.CYAN}Максимальний час: {Fore.WHITE}{format_time(max_time)}"
+            )
     else:
         print_success(f"Обробку завершено за {format_time(processing_time)}")
 
@@ -127,7 +157,9 @@ def main(argv: list[str] | None = None) -> int:
                 file_size = f"{file_size_bytes / 1024:.1f} КБ"
             else:
                 file_size = f"{file_size_bytes / (1024 * 1024):.2f} МБ"
-            print(f"   {Fore.CYAN}{i}. {Fore.WHITE}{file_path} {Fore.YELLOW}({file_size})")
+            print(
+                f"   {Fore.CYAN}{i}. {Fore.WHITE}{file_path} {Fore.YELLOW}({file_size})"
+            )
     else:
         print_warning("Не було створено жодного файлу")
 
@@ -135,5 +167,3 @@ def main(argv: list[str] | None = None) -> int:
         connection.close()
         print_info("Підключення до OLAP сервера закрито")
     return 0
-
-

@@ -84,3 +84,37 @@ def format_time(seconds: float):
         return f"{seconds:.2f} сек"
 
 
+def convert_dotnet_to_python(value):
+    """Конвертує .NET типи (через pythonnet) у серіалізовані Python значення для запису в CSV/XLSX."""
+    try:
+        import System  # type: ignore
+    except Exception:
+        System = None  # type: ignore
+
+    if value is None:
+        return None
+    if System is not None:
+        if isinstance(value, System.DateTime):
+            # Перетворюємо у python datetime або ISO‑рядок (xlsxwriter підтримує datetime, але без tz)
+            dt = datetime.datetime(
+                value.Year,
+                value.Month,
+                value.Day,
+                value.Hour,
+                value.Minute,
+                value.Second,
+                microsecond=int(value.Millisecond * 1000),
+            )
+            return dt
+        if isinstance(value, System.Decimal):
+            return float(value)
+        if isinstance(value, System.DBNull):
+            return None
+        if isinstance(value, (System.Int32, System.Int64)):
+            return int(value)
+        if isinstance(value, System.String):
+            return str(value)
+        if isinstance(value, System.Boolean):
+            return bool(value)
+    # Фолбек: повертаємо як є
+    return value

@@ -23,7 +23,9 @@ def save_credentials(username: str, password: str, encrypted: bool = False) -> b
         if encrypted:
             machine_id = get_machine_id()
             master_password = get_master_password()
-            base_secret = f"{machine_id}:{master_password}" if master_password else machine_id
+            base_secret = (
+                f"{machine_id}:{master_password}" if master_password else machine_id
+            )
             key, salt = generate_encryption_key(base_secret)
             encrypted_data = encrypt_credentials(username, password, key)
             with open(credentials_file, "wb") as f:
@@ -57,21 +59,31 @@ def load_credentials(encrypted: bool = False):
                 salt, encrypted_data = content
                 machine_id = get_machine_id()
                 master_password = get_master_password()
-                base_secret = f"{machine_id}:{master_password}" if master_password else machine_id
+                base_secret = (
+                    f"{machine_id}:{master_password}" if master_password else machine_id
+                )
                 key, _ = generate_encryption_key(base_secret, salt)
                 username, password = decrypt_credentials(encrypted_data, key)
-                if not (username and password) and (
-                    os.getenv("OLAP_USE_MASTER_PASSWORD", "false").lower() in ("true", "1", "yes")
-                ) and not os.getenv("OLAP_MASTER_PASSWORD"):
+                if (
+                    not (username and password)
+                    and (
+                        os.getenv("OLAP_USE_MASTER_PASSWORD", "false").lower()
+                        in ("true", "1", "yes")
+                    )
+                    and not os.getenv("OLAP_MASTER_PASSWORD")
+                ):
                     try:
                         import getpass
                         from colorama import Fore
+
                         mp = getpass.getpass(
                             f"{Fore.CYAN}Введіть майстер‑пароль для розшифрування: {Fore.RESET}"
                         )
                         base_secret_retry = f"{machine_id}:{mp}" if mp else machine_id
                         key_retry, _ = generate_encryption_key(base_secret_retry, salt)
-                        username, password = decrypt_credentials(encrypted_data, key_retry)
+                        username, password = decrypt_credentials(
+                            encrypted_data, key_retry
+                        )
                     except Exception:
                         pass
                 if username and password:
@@ -112,9 +124,8 @@ def delete_credentials() -> bool:
 
 def get_current_windows_user() -> str:
     import os as _os
+
     try:
         return _os.getlogin()
     except Exception:
         return _os.getenv("USERNAME", "Невідомий користувач")
-
-

@@ -93,7 +93,8 @@ DEBUG=false
 # Експорт
 EXPORT_FORMAT=XLSX      # XLSX | CSV | BOTH
 FORCE_CSV_ONLY=false    # true → лише CSV
-XLSX_STREAMING=false    # true → швидший XLSX без важкого форматування
+XLSX_STREAMING=false    # true → стрімінговий XLSX (рядки пишуться без DataFrame, менший пік пам'яті)
+XLSX_MIN_FORMAT=false   # true → мінімальне форматування XLSX (без автоширини колонок і freeze panes)
 
 # CSV
 CSV_DELIMITER=;
@@ -127,7 +128,8 @@ OLAP_DOMAIN=EPICENTRK
 ### Експорт і продуктивність
 - `EXPORT_FORMAT` (`XLSX` | `CSV` | `BOTH`): обраний формат експорту.
 - `FORCE_CSV_ONLY` (bool): форсувати тільки CSV (ігнорувати XLSX навіть у BOTH).
-- `XLSX_STREAMING` (bool): пришвидшений запис XLSX рядками (мінімум форматування).
+- `XLSX_STREAMING` (bool): стрімінговий запис XLSX без проміжного DataFrame. Переваги: значно менший пік памʼяті на великих наборах даних; обмеження: мінімальне форматування (пишемо рядки напряму).
+- `XLSX_MIN_FORMAT` (bool): мінімальне форматування XLSX (без автоширини колонок і `freeze_panes`). Доречно для максимального прискорення запису.
 - `CSV_DELIMITER` (символ): роздільник CSV (`,`, `;`, `\t`).
 - `CSV_ENCODING` (string): кодування CSV (рекомендовано `utf-8-sig`).
 - `CSV_QUOTING` (`all` | `minimal` | `nonnumeric`): політика лапок у CSV.

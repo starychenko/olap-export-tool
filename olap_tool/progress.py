@@ -6,6 +6,7 @@ import time
 
 from .utils import format_time, get_current_time
 from colorama import Fore
+from typing import Callable
 
 
 animation_running = False
@@ -82,11 +83,19 @@ class TimeTracker:
         return processing_time + self.get_remaining_wait_time()
 
     def get_percentage_complete(self):
-        return (self.processed_items / self.total_items) * 100 if self.total_items > 0 else 0
+        return (
+            (self.processed_items / self.total_items) * 100
+            if self.total_items > 0
+            else 0
+        )
 
     def get_total_time(self):
         remaining = self.get_remaining_time()
-        return self.get_elapsed_time() if remaining is None else self.get_elapsed_time() + remaining
+        return (
+            self.get_elapsed_time()
+            if remaining is None
+            else self.get_elapsed_time() + remaining
+        )
 
     def get_progress_info(self):
         elapsed = self.get_elapsed_time()
@@ -102,7 +111,9 @@ class TimeTracker:
         if debug_output and self.elapsed_times and self.processed_items > 0:
             pass  # скорочено: діагностичні друки залишені в оригіналі
 
-        info = f"Прогрес: {percentage:.1f}% ({self.processed_items}/{self.total_items})\n"
+        info = (
+            f"Прогрес: {percentage:.1f}% ({self.processed_items}/{self.total_items})\n"
+        )
         info += f"Минуло: {format_time(elapsed)}"
         if remaining_total is not None:
             accuracy_note = ""
@@ -124,12 +135,46 @@ def loading_spinner(description: str, estimated_time: float | None = None):
         elapsed = time.time() - start_time
         elapsed_str = format_time(elapsed)
         message = f"{Fore.BLUE}[{get_current_time()}] {next(spinner)} {description} | Час: {elapsed_str}"
-        sys.stdout.write(f"\r{message}")
+        # Пишемо лише у старті рядка і очищуємо поточну лінію
+        sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
+        sys.stdout.write(message)
         sys.stdout.flush()
         time.sleep(0.1)
-    sys.stdout.write("\r" + " " * len(message) + "\r")
+    # Очищення рядка спінера
+    sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
     sys.stdout.flush()
-    print()
+    # Додатковий перенос рядка не друкуємо, щоб не ламати наступні логи
+
+
+def streaming_spinner(
+    description: str, stop_event: threading.Event, rows_fn: Callable[[], int]
+):
+    """Анімація для стрімінгових експортів з відображенням кількості рядків і часу."""
+    spinner = itertools.cycle(["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"])
+    start_time = time.time()
+    last_message = ""
+    # Інтервал оновлення, мс (за замовчуванням 100 мс). Діапазон: 50..500 мс
+    try:
+        interval_ms = int(os.getenv("PROGRESS_UPDATE_INTERVAL_MS", "100"))
+    except Exception:
+        interval_ms = 100
+    interval_ms = max(50, min(500, interval_ms))
+    interval_s = interval_ms / 1000.0
+    while not stop_event.is_set():
+        elapsed_str = format_time(time.time() - start_time)
+        try:
+            rows = rows_fn()
+        except Exception:
+            rows = 0
+        message = f"{Fore.BLUE}[{get_current_time()}] {next(spinner)} {description} | Рядків: {rows} | Час: {elapsed_str}"
+        sys.stdout.write("\r" + " " * (len(last_message) + 2) + "\r")
+        sys.stdout.write(message)
+        sys.stdout.flush()
+        last_message = message
+        time.sleep(interval_s)
+    # Очищення рядка після завершення
+    sys.stdout.write("\r" + " " * (len(last_message) + 2) + "\r")
+    sys.stdout.flush()
 
 
 def countdown_timer(seconds: int):
@@ -143,5 +188,3 @@ def countdown_timer(seconds: int):
         _sys.stdout.flush()
         time.sleep(1)
     print()
-
-

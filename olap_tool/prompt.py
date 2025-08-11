@@ -15,5 +15,3 @@ def prompt_credentials(with_domain: bool = False):
             username = f"{domain}\\{username}"
             print_info(f"Використовуємо повне ім'я користувача: {username}")
     return username, password
-
-

@@ -54,11 +54,15 @@ def get_machine_id() -> str:
         print_warning(f"Не вдалося отримати унікальний ідентифікатор пристрою: {e}")
         import hashlib
 
-        fallback = f"user-{os.environ.get('USERNAME', '')}-{os.environ.get('WINDIR', '')}"
+        fallback = (
+            f"user-{os.environ.get('USERNAME', '')}-{os.environ.get('WINDIR', '')}"
+        )
         return hashlib.md5(fallback.encode()).hexdigest()
 
 
-def generate_encryption_key(password: str | bytes, salt: bytes | None = None) -> Tuple[bytes, bytes]:
+def generate_encryption_key(
+    password: str | bytes, salt: bytes | None = None
+) -> Tuple[bytes, bytes]:
     if salt is None:
         salt = os.urandom(16)
     if isinstance(password, str):
@@ -128,5 +132,3 @@ def decrypt_credentials(encrypted_data: bytes, encryption_key: bytes):
     except Exception as e:
         print_error(f"Помилка розшифрування облікових даних: {e}")
         return None, None
-
-
