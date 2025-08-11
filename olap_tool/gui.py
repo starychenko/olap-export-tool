@@ -366,7 +366,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.lbl_week.setText(f"{period} ({idx}/{total})")
             self.overall.setRange(0, total)
             self.overall.setValue(idx - 1)
-            self.current.setRange(0, 0)  # до появи рядків
             self.lbl_rows.setText("0")
             self._append_log(line)
             return
@@ -377,8 +376,6 @@ class MainWindow(QtWidgets.QMainWindow):
             t = m.group(2)
             self.lbl_rows.setText(rows)
             self.lbl_elapsed.setText(t)
-            if self.current.maximum() == 0:
-                self.current.setRange(0, 0)  # індетермінований, бо невідомо total rows
             return
         # countdown lines — не додаємо в логи
         if self._re_countdown.search(line):
@@ -390,7 +387,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.lbl_rows.setText(str(rows))
             # позначимо завершення поточного
             self.overall.setValue(self.overall.value() + 1)
-            self.current.setRange(0, 1)
             self._append_log(line)
             return
         # realtime exported file
