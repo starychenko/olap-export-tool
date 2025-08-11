@@ -1,9 +1,28 @@
 import datetime
+import os
 import sys
 from colorama import init, Fore, Style
 
 
 init(autoreset=True)
+
+
+# Визначення набору символів для логів (емодзі або ASCII-фолбек)
+_ascii_logs = os.getenv("OLAP_ASCII_LOGS", "false").lower() in ("true", "1", "yes")
+if _ascii_logs:
+    ICON_INFO = "i"
+    ICON_WARN = "!"
+    ICON_ERR = "x"
+    ICON_OK = "+"
+    ICON_PROGRESS = "*"
+    ICON_STOP = "X"
+else:
+    ICON_INFO = "ℹ️"
+    ICON_WARN = "⚠️"
+    ICON_ERR = "❌"
+    ICON_OK = "✅"
+    ICON_PROGRESS = "🔄"
+    ICON_STOP = "🛑"
 
 
 def ensure_dir(pathlike):
@@ -27,7 +46,7 @@ def print_header(text: str):
 
 
 def print_info_detail(text: str, details: dict | None = None):
-    print(f"{Fore.GREEN}[{get_current_time()}] ℹ️  {text}")
+    print(f"{Fore.GREEN}[{get_current_time()}] {ICON_INFO}  {text}")
     if details:
         for key, value in details.items():
             if "password" in key.lower() or "пароль" in key.lower():
@@ -36,7 +55,7 @@ def print_info_detail(text: str, details: dict | None = None):
 
 
 def print_tech_error(text: str, error_obj: Exception | None = None):
-    print(f"{Fore.RED}[{get_current_time()}] 🛑 {text}")
+    print(f"{Fore.RED}[{get_current_time()}] {ICON_STOP} {text}")
     if error_obj:
         error_type = type(error_obj).__name__
         error_message = str(error_obj)
@@ -54,23 +73,23 @@ def print_tech_error(text: str, error_obj: Exception | None = None):
 
 
 def print_info(text: str):
-    print(f"{Fore.GREEN}[{get_current_time()}] ℹ️  {text}")
+    print(f"{Fore.GREEN}[{get_current_time()}] {ICON_INFO}  {text}")
 
 
 def print_warning(text: str):
-    print(f"{Fore.YELLOW}[{get_current_time()}] ⚠️  {text}")
+    print(f"{Fore.YELLOW}[{get_current_time()}] {ICON_WARN}  {text}")
 
 
 def print_error(text: str):
-    print(f"{Fore.RED}[{get_current_time()}] ❌ {text}")
+    print(f"{Fore.RED}[{get_current_time()}] {ICON_ERR} {text}")
 
 
 def print_success(text: str):
-    print(f"{Fore.GREEN}[{get_current_time()}] ✅ {text}")
+    print(f"{Fore.GREEN}[{get_current_time()}] {ICON_OK} {text}")
 
 
 def print_progress(text: str):
-    print(f"{Fore.BLUE}[{get_current_time()}] 🔄 {text}")
+    print(f"{Fore.BLUE}[{get_current_time()}] {ICON_PROGRESS} {text}")
 
 
 def format_time(seconds: float):

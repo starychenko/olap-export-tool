@@ -11,6 +11,20 @@ from typing import Callable
 
 animation_running = False
 
+# ASCII fallback for consoles/environments without full Unicode support
+ASCII_MODE = os.getenv("OLAP_ASCII_LOGS", "false").lower() in ("true", "1", "yes")
+SPINNER_FRAMES = ["-", "\\", "|", "/"] if ASCII_MODE else [
+    "⣾",
+    "⣽",
+    "⣻",
+    "⢿",
+    "⡿",
+    "⣟",
+    "⣯",
+    "⣷",
+]
+COUNTDOWN_ICON = "*" if ASCII_MODE else "⏱️"
+
 
 class TimeTracker:
     def __init__(self, total_items: int):
@@ -128,7 +142,7 @@ class TimeTracker:
 def loading_spinner(description: str, estimated_time: float | None = None):
     global animation_running
     animation_running = True
-    spinner = itertools.cycle(["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"])
+    spinner = itertools.cycle(SPINNER_FRAMES)
     start_time = time.time()
     message = ""
     while animation_running:
@@ -150,7 +164,7 @@ def streaming_spinner(
     description: str, stop_event: threading.Event, rows_fn: Callable[[], int]
 ):
     """Анімація для стрімінгових експортів з відображенням кількості рядків і часу."""
-    spinner = itertools.cycle(["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"])
+    spinner = itertools.cycle(SPINNER_FRAMES)
     start_time = time.time()
     last_message = ""
     # Інтервал оновлення, мс (за замовчуванням 100 мс). Діапазон: 50..500 мс
@@ -183,7 +197,7 @@ def countdown_timer(seconds: int):
         import sys as _sys
 
         _sys.stdout.write(
-            f"\r{Fore.YELLOW}[{get_current_time()}] ⏱️  Очікування: залишилось {time_left}..."
+            f"\r{Fore.YELLOW}[{get_current_time()}] {COUNTDOWN_ICON}  Очікування: залишилось {time_left}..."
         )
         _sys.stdout.flush()
         time.sleep(1)
