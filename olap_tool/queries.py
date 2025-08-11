@@ -8,7 +8,7 @@ import pandas as pd
 
 from .utils import print_info, print_warning, print_progress, print_success, format_time
 from .exporter import export_csv_stream, export_xlsx_dataframe
-from .progress import loading_spinner, animation_running
+from . import progress
 
 
 def convert_dotnet_to_python(value):
@@ -162,18 +162,17 @@ def run_dax_query(connection, reporting_period):
     /* END QUERY BUILDER */
     """
 
-    from .progress import TimeTracker, loading_spinner, animation_running
     import threading
     import time as _time
 
     print_progress("Виконання запиту до OLAP-кубу...")
     query_start_time = _time.time()
+    spinner_thread = None
     try:
         cursor = connection.cursor()
         cursor.execute(query)
         estimated_query_time = 120
-        spinner_thread = threading.Thread(target=loading_spinner, args=("Отримання даних з OLAP кубу", estimated_query_time))
-        spinner_thread.daemon = True
+        spinner_thread = threading.Thread(target=progress.loading_spinner, args=("Отримання даних з OLAP кубу", estimated_query_time))
         spinner_thread.start()
 
         export_format = os.getenv("EXPORT_FORMAT", "XLSX").upper()
@@ -183,9 +182,7 @@ def run_dax_query(connection, reporting_period):
             encoding = os.getenv("CSV_ENCODING", "utf-8-sig")
             quoting_mode = os.getenv("CSV_QUOTING", "minimal").lower()
             row_count = export_csv_stream(cursor, csv_path, delimiter, encoding, quoting_mode)
-            from .progress import animation_running
-
-            animation_running = False
+            progress.animation_running = False
             spinner_thread.join(timeout=1.0)
             query_duration = _time.time() - query_start_time
             from colorama import Fore
@@ -195,11 +192,10 @@ def run_dax_query(connection, reporting_period):
             return str(csv_path)
 
         rows = cursor.fetchall()
-        animation_running = False
+        progress.animation_running = False
         spinner_thread.join(timeout=1.0)
         columns = [desc[0] for desc in cursor.description]
         query_duration = _time.time() - query_start_time
-        from .utils import print_success
         print_success(f"Запит виконано за {format_time(query_duration)}. Отримано {len(rows)} рядків даних.")
         cursor.close()
 
@@ -255,7 +251,6 @@ def run_dax_query(connection, reporting_period):
 
         export_format = os.getenv("EXPORT_FORMAT", "XLSX").upper()
         if export_format not in ["XLSX", "CSV", "BOTH"]:
-            from .utils import print_warning
             print_warning(f"Невідомий формат експорту: {export_format}. Використовуємо XLSX.")
             export_format = "XLSX"
         export_xlsx = export_format in ["XLSX", "BOTH"]
@@ -276,7 +271,6 @@ def run_dax_query(connection, reporting_period):
             exported_files.append((str(csv_path), Path(csv_path).stat().st_size))
 
         from colorama import Fore
-        from .utils import print_success
 
         for filepath, file_size_bytes in exported_files:
             if file_size_bytes < 1024 * 1024:
@@ -290,6 +284,13 @@ def run_dax_query(connection, reporting_period):
 
         print_error(f"Помилка при виконанні запиту: {e}")
         return None
+    finally:
+        if spinner_thread is not None:
+            progress.animation_running = False
+            try:
+                spinner_thread.join(timeout=1.0)
+            except Exception:
+                pass
 
 
 def get_available_weeks(connection):
