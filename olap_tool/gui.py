@@ -392,13 +392,24 @@ class MainWindow(QtWidgets.QMainWindow):
         # realtime exported file
         m = self._re_file_exported.search(line)
         if m:
-            self.list_files.addItem(m.group(1))
+            filename = m.group(1)
+            # Перевіряємо, чи файл вже є в списку
+            existing_items = [self.list_files.item(i).text() for i in range(self.list_files.count())]
+            if not any(filename in item for item in existing_items):
+                self.list_files.addItem(filename)
             self._append_log(line)
             return
-        # files created lines
+        # files created lines (з розміром) - оновлюємо існуючі записи
         m = self._re_file_line.search(line)
         if m:
-            self.list_files.addItem(f"{m.group(1)} ({m.group(2)})")
+            filename = m.group(1)
+            size = m.group(2)
+            # Шукаємо існуючий елемент і оновлюємо його
+            for i in range(self.list_files.count()):
+                item = self.list_files.item(i)
+                if filename in item.text():
+                    item.setText(f"{filename} ({size})")
+                    break
             self._append_log(line)
             return
         # summary files count
