@@ -9,6 +9,8 @@ import time
 from PySide6 import QtCore, QtGui, QtWidgets
 from pathlib import Path
 
+from .styles import ModernStyles, ModernLayouts
+
 
 @dataclass
 class AppConfig:
@@ -99,26 +101,38 @@ class ProcessRunner(QtCore.QObject):
         self.finished.emit(int(code))
 
     def _on_error(self, err: QtCore.QProcess.ProcessError) -> None:  # type: ignore[override]
-        mapping = {
-            QtCore.QProcess.FailedToStart: "Не вдалося запустити процес (перевірте Python/venv)",
-            QtCore.QProcess.Crashed: "Процес аварійно завершився",
-            QtCore.QProcess.Timedout: "Таймаут операції процесу",
-            QtCore.QProcess.WriteError: "Помилка запису в процес",
-            QtCore.QProcess.ReadError: "Помилка читання з процесу",
-            QtCore.QProcess.UnknownError: "Невідома помилка процесу",
-        }
-        msg = mapping.get(err, f"Помилка процесу: {err}")
-        if self._requested_stop and err == QtCore.QProcess.Crashed:
-            self.output.emit("[GUI] ⚠️  Процес зупинено користувачем")
-        else:
-            self.output.emit(f"[GUI] ❌ {msg}")
+        try:
+            mapping = {
+                QtCore.QProcess.FailedToStart: "Не вдалося запустити процес (перевірте Python/venv)",
+                QtCore.QProcess.Crashed: "Процес аварійно завершився",
+                QtCore.QProcess.Timedout: "Таймаут операції процесу",
+                QtCore.QProcess.WriteError: "Помилка запису в процес",
+                QtCore.QProcess.ReadError: "Помилка читання з процесу",
+                QtCore.QProcess.UnknownError: "Невідома помилка процесу",
+            }
+            msg = mapping.get(err, f"Помилка процесу: {err}")
+            if self._requested_stop and err == QtCore.QProcess.Crashed:
+                self.output.emit("[GUI] ⚠️  Процес зупинено користувачем")
+            else:
+                self.output.emit(f"[GUI] ❌ {msg}")
+        except Exception as e:
+            self.output.emit(f"[GUI] ❌ Помилка обробки помилки процесу: {e}")
 
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("OLAP Export Tool")
-        self.resize(1000, 700)
+        self.setWindowTitle("OLAP Export Tool - Сучасний інтерфейс")
+        self.resize(1200, 800)
+        
+        # Застосовуємо сучасну тему
+        ModernStyles.apply_modern_theme(self, "light")
+        
+        # Додаємо меню для зміни теми
+        self._create_menu_bar()
+        
+        # Обробка закриття вікна
+        self.closeEvent = self._on_close_event
 
         self.runner: ProcessRunner | None = None
         self._job_start_ts: float | None = None
@@ -138,106 +152,299 @@ class MainWindow(QtWidgets.QMainWindow):
     def _init_settings_tab(self) -> None:
         cfg = AppConfig.from_env()
         w = QtWidgets.QWidget()
-        form = QtWidgets.QFormLayout(w)
+        v = QtWidgets.QVBoxLayout(w)
+        v.setSpacing(20)
+        v.setContentsMargins(20, 20, 20, 20)
+
+        # Заголовок
+        title_label = QtWidgets.QLabel("Налаштування експорту")
+        title_label.setProperty("class", "title")
+        title_label.setAlignment(QtCore.Qt.AlignCenter)
+        v.addWidget(title_label)
+
+        # Основні налаштування
+        main_settings_widget = QtWidgets.QWidget()
+        main_form = QtWidgets.QFormLayout(main_settings_widget)
+        main_form.setSpacing(16)
+        main_form.setLabelAlignment(QtCore.Qt.AlignRight)
 
         self.edt_server = QtWidgets.QLineEdit(cfg.olap_server or "")
+        self.edt_server.setPlaceholderText("Введіть адресу OLAP сервера")
         self.edt_db = QtWidgets.QLineEdit(cfg.olap_database or "")
+        self.edt_db.setPlaceholderText("Введіть назву бази даних")
+        
         self.cmb_auth = QtWidgets.QComboBox()
         self.cmb_auth.addItems(["SSPI", "LOGIN"])
         idx = self.cmb_auth.findText((cfg.auth_method or "SSPI").upper())
         if idx >= 0:
             self.cmb_auth.setCurrentIndex(idx)
 
+        main_form.addRow("🌐 OLAP сервер:", self.edt_server)
+        main_form.addRow("🗄️ База даних:", self.edt_db)
+        main_form.addRow("🔐 Метод автентифікації:", self.cmb_auth)
+
+        main_card = ModernLayouts.create_card_layout("🔧 Основні налаштування", main_settings_widget)
+        v.addWidget(main_card)
+
+        # Налаштування фільтрів
+        filter_widget = QtWidgets.QWidget()
+        filter_form = QtWidgets.QFormLayout(filter_widget)
+        filter_form.setSpacing(16)
+        filter_form.setLabelAlignment(QtCore.Qt.AlignRight)
+
         self.edt_filter = QtWidgets.QLineEdit(cfg.filter_fg1_name or "")
+        self.edt_filter.setPlaceholderText("Введіть назву фільтра FG1")
         self.edt_start = QtWidgets.QLineEdit(cfg.year_week_start or "")
+        self.edt_start.setPlaceholderText("YYYY-WW (наприклад: 2025-01)")
         self.edt_end = QtWidgets.QLineEdit(cfg.year_week_end or "")
+        self.edt_end.setPlaceholderText("YYYY-WW (наприклад: 2025-52)")
+
+        filter_form.addRow("🔍 Фільтр FG1:", self.edt_filter)
+        filter_form.addRow("📅 Період початок:", self.edt_start)
+        filter_form.addRow("📅 Період кінець:", self.edt_end)
+
+        filter_card = ModernLayouts.create_card_layout("🎯 Фільтри та періоди", filter_widget)
+        v.addWidget(filter_card)
+
+        # Налаштування експорту
+        export_widget = QtWidgets.QWidget()
+        export_form = QtWidgets.QFormLayout(export_widget)
+        export_form.setSpacing(16)
+        export_form.setLabelAlignment(QtCore.Qt.AlignRight)
+
         self.cmb_format = QtWidgets.QComboBox()
         self.cmb_format.addItems(["XLSX", "CSV", "BOTH"])
         idx2 = self.cmb_format.findText((cfg.export_format or "XLSX").upper())
         if idx2 >= 0:
             self.cmb_format.setCurrentIndex(idx2)
-        self.chk_stream = QtWidgets.QCheckBox("XLSX streaming (менше памʼяті)")
+        
+        self.chk_stream = QtWidgets.QCheckBox("XLSX streaming (менше памʼяті, швидше експорт)")
         self.chk_stream.setChecked(cfg.xlsx_streaming)
 
-        form.addRow("OLAP сервер", self.edt_server)
-        form.addRow("База даних", self.edt_db)
-        form.addRow("Метод автентифікації", self.cmb_auth)
-        form.addRow("Фільтр FG1", self.edt_filter)
-        form.addRow("Період початок (YYYY-WW)", self.edt_start)
-        form.addRow("Період кінець (YYYY-WW)", self.edt_end)
-        form.addRow("Формат експорту", self.cmb_format)
-        form.addRow(self.chk_stream)
+        export_form.addRow("📊 Формат експорту:", self.cmb_format)
+        export_form.addRow("", self.chk_stream)
 
-        btn_save = QtWidgets.QPushButton("Застосувати у .env")
+        export_card = ModernLayouts.create_card_layout("💾 Налаштування експорту", export_widget)
+        v.addWidget(export_card)
+
+        # Кнопка збереження
+        btn_save = ModernStyles.create_icon_button("💾 Застосувати налаштування", button_type="primary")
         btn_save.clicked.connect(self._apply_env)
-        form.addRow(btn_save)
+        btn_save.setMinimumHeight(50)
+        
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(btn_save)
+        button_layout.addStretch()
+        v.addLayout(button_layout)
 
-        self.tabs.addTab(w, "Налаштування")
+        self.tabs.addTab(w, "⚙️ Налаштування")
+    
+    def _create_menu_bar(self) -> None:
+        """Створює меню з перемикачем теми"""
+        menubar = self.menuBar()
+        
+        # Меню "Вид"
+        view_menu = menubar.addMenu("Вид")
+        
+        # Дія для світлої теми
+        light_theme_action = QtGui.QAction("Світла тема", self)
+        light_theme_action.setCheckable(True)
+        light_theme_action.setChecked(True)
+        light_theme_action.triggered.connect(lambda: self._change_theme("light"))
+        
+        # Дія для темної теми
+        dark_theme_action = QtGui.QAction("Темна тема", self)
+        dark_theme_action.setCheckable(True)
+        dark_theme_action.triggered.connect(lambda: self._change_theme("dark"))
+        
+        # Група дій (тільки одна тема може бути активною)
+        theme_group = QtGui.QActionGroup(self)
+        theme_group.addAction(light_theme_action)
+        theme_group.addAction(dark_theme_action)
+        theme_group.setExclusive(True)
+        
+        view_menu.addAction(light_theme_action)
+        view_menu.addAction(dark_theme_action)
+        
+        # Меню "Допомога"
+        help_menu = menubar.addMenu("Допомога")
+        about_action = QtGui.QAction("Про програму", self)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
+    
+    def _change_theme(self, theme: str) -> None:
+        """Змінює тему інтерфейсу"""
+        ModernStyles.apply_modern_theme(self, theme)
+        # Встановлюємо атрибут теми для додаткових стилів
+        self.setProperty("theme", theme)
+        self.style().unpolish(self)
+        self.style().polish(self)
+    
+    def _show_about(self) -> None:
+        """Показує діалог "Про програму"""
+        QtWidgets.QMessageBox.about(
+            self,
+            "Про OLAP Export Tool",
+            """
+            <h3>OLAP Export Tool</h3>
+            <p>Сучасний інструмент для експорту даних з OLAP кубів</p>
+            <p><b>Версія:</b> 2.0</p>
+            <p><b>Технології:</b> Python, PySide6, .NET</p>
+            <p><b>Ліцензія:</b> MIT</p>
+            """
+        )
 
     def _init_export_tab(self) -> None:
         w = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(w)
+        v.setSpacing(20)
+        v.setContentsMargins(20, 20, 20, 20)
 
-        self.btn_start = QtWidgets.QPushButton("Запустити експорт")
-        self.btn_stop = QtWidgets.QPushButton("Зупинити")
+        # Заголовок вкладки
+        title_label = QtWidgets.QLabel("Експорт даних з OLAP кубу")
+        title_label.setProperty("class", "title")
+        title_label.setAlignment(QtCore.Qt.AlignCenter)
+        v.addWidget(title_label)
+
+        # Кнопки управління
+        self.btn_start = ModernStyles.create_icon_button("🚀 Запустити експорт", button_type="primary")
+        self.btn_stop = ModernStyles.create_icon_button("⏹️ Зупинити", button_type="stop")
         self.btn_stop.setEnabled(False)
-        h = QtWidgets.QHBoxLayout()
-        h.addWidget(self.btn_start)
-        h.addWidget(self.btn_stop)
+        
+        button_layout = ModernLayouts.create_button_row(self.btn_start, self.btn_stop)
+        v.addLayout(button_layout)
 
-        v.addLayout(h)
-
-        info_grid = QtWidgets.QGridLayout()
-        self.lbl_status = QtWidgets.QLabel("Готово")
+        # Картка з інформацією про статус
+        status_widget = QtWidgets.QWidget()
+        status_layout = ModernLayouts.create_info_grid()
+        
+        # Статус з особливим стилем
+        self.lbl_status = ModernStyles.create_status_label("Готово", "success")
+        status_layout.addWidget(QtWidgets.QLabel("Статус:"), 0, 0)
+        status_layout.addWidget(self.lbl_status, 0, 1)
+        
+        # Інша інформація
         self.lbl_week = QtWidgets.QLabel("—")
         self.lbl_rows = QtWidgets.QLabel("0")
         self.lbl_elapsed = QtWidgets.QLabel("0.00 сек")
         self.lbl_eta = QtWidgets.QLabel("—")
-        info_grid.addWidget(QtWidgets.QLabel("Статус:"), 0, 0)
-        info_grid.addWidget(self.lbl_status, 0, 1)
-        info_grid.addWidget(QtWidgets.QLabel("Тиждень:"), 1, 0)
-        info_grid.addWidget(self.lbl_week, 1, 1)
-        info_grid.addWidget(QtWidgets.QLabel("Рядків (поточний):"), 2, 0)
-        info_grid.addWidget(self.lbl_rows, 2, 1)
-        info_grid.addWidget(QtWidgets.QLabel("Минулий час:"), 3, 0)
-        info_grid.addWidget(self.lbl_elapsed, 3, 1)
-        info_grid.addWidget(QtWidgets.QLabel("ETA:"), 4, 0)
-        info_grid.addWidget(self.lbl_eta, 4, 1)
-        v.addLayout(info_grid)
+        
+        status_layout.addWidget(QtWidgets.QLabel("Тиждень:"), 1, 0)
+        status_layout.addWidget(self.lbl_week, 1, 1)
+        status_layout.addWidget(QtWidgets.QLabel("Рядків (поточний):"), 2, 0)
+        status_layout.addWidget(self.lbl_rows, 2, 1)
+        status_layout.addWidget(QtWidgets.QLabel("Минулий час:"), 3, 0)
+        status_layout.addWidget(self.lbl_elapsed, 3, 1)
+        status_layout.addWidget(QtWidgets.QLabel("ETA:"), 4, 0)
+        status_layout.addWidget(self.lbl_eta, 4, 1)
+        
+        status_widget.setLayout(status_layout)
+        status_card = ModernLayouts.create_card_layout("📊 Інформація про експорт", status_widget)
+        v.addWidget(status_card)
 
+        # Прогрес-бар
+        progress_widget = QtWidgets.QWidget()
+        progress_layout = QtWidgets.QVBoxLayout(progress_widget)
+        progress_layout.setSpacing(8)
+        
+        progress_label = QtWidgets.QLabel("Загальний прогрес")
+        progress_label.setProperty("class", "title")
+        progress_layout.addWidget(progress_label)
+        
         self.overall = QtWidgets.QProgressBar()
         self.overall.setRange(0, 100)
         self.overall.setValue(0)
-        v.addWidget(QtWidgets.QLabel("Загальний прогрес"))
-        v.addWidget(self.overall)
+        self.overall.setMinimumHeight(30)
+        progress_layout.addWidget(self.overall)
+        
+        progress_card = ModernLayouts.create_card_layout("📈 Прогрес виконання", progress_widget)
+        v.addWidget(progress_card)
 
         # Блок часу з моменту старту
-        time_grid = QtWidgets.QGridLayout()
+        time_widget = QtWidgets.QWidget()
+        time_layout = ModernLayouts.create_info_grid()
+        
         self.lbl_total_elapsed_title = QtWidgets.QLabel("Всього минуло:")
         self.lbl_total_elapsed = QtWidgets.QLabel("0.00 сек")
-        time_grid.addWidget(self.lbl_total_elapsed_title, 0, 0)
-        time_grid.addWidget(self.lbl_total_elapsed, 0, 1)
-        v.addLayout(time_grid)
+        time_layout.addWidget(self.lbl_total_elapsed_title, 0, 0)
+        time_layout.addWidget(self.lbl_total_elapsed, 0, 1)
+        
+        time_widget.setLayout(time_layout)
+        time_card = ModernLayouts.create_card_layout("⏱️ Загальний час", time_widget)
+        v.addWidget(time_card)
 
-        files_box = QtWidgets.QGroupBox("Створені файли")
-        fb_layout = QtWidgets.QVBoxLayout(files_box)
+        # Список файлів
+        files_widget = QtWidgets.QWidget()
+        files_layout = QtWidgets.QVBoxLayout(files_widget)
+        files_layout.setSpacing(8)
+        
         self.list_files = QtWidgets.QListWidget()
-        fb_layout.addWidget(self.list_files)
-        v.addWidget(files_box)
+        self.list_files.setMinimumHeight(150)
+        files_layout.addWidget(self.list_files)
+        
+        files_card = ModernLayouts.create_card_layout("📁 Створені файли", files_widget)
+        v.addWidget(files_card)
 
+        # Підключення сигналів
         self.btn_start.clicked.connect(self._start_export)
         self.btn_stop.clicked.connect(self._stop_export)
 
-        self.tabs.addTab(w, "Експорт")
+        self.tabs.addTab(w, "🚀 Експорт")
 
     def _init_logs_tab(self) -> None:
         w = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(w)
+        v.setSpacing(20)
+        v.setContentsMargins(20, 20, 20, 20)
+
+        # Заголовок
+        title_label = QtWidgets.QLabel("Журнал виконання експорту")
+        title_label.setProperty("class", "title")
+        title_label.setAlignment(QtCore.Qt.AlignCenter)
+        v.addWidget(title_label)
+
+        # Інструменти для логів
+        tools_widget = QtWidgets.QWidget()
+        tools_layout = QtWidgets.QHBoxLayout(tools_widget)
+        tools_layout.setSpacing(12)
+        
+        btn_clear = ModernStyles.create_icon_button("🗑️ Очистити логи", button_type="secondary")
+        btn_clear.clicked.connect(self._clear_logs)
+        
+        btn_copy = ModernStyles.create_icon_button("📋 Копіювати", button_type="secondary")
+        btn_copy.clicked.connect(self._copy_logs)
+        
+        btn_save = ModernStyles.create_icon_button("💾 Зберегти логи", button_type="secondary")
+        btn_save.clicked.connect(self._save_logs)
+        
+        tools_layout.addWidget(btn_clear)
+        tools_layout.addWidget(btn_copy)
+        tools_layout.addWidget(btn_save)
+        tools_layout.addStretch()
+        
+        tools_card = ModernLayouts.create_card_layout("🛠️ Інструменти", tools_widget)
+        v.addWidget(tools_card)
+
+        # Текстове поле для логів
+        logs_widget = QtWidgets.QWidget()
+        logs_layout = QtWidgets.QVBoxLayout(logs_widget)
+        logs_layout.setSpacing(8)
+        
+        logs_label = QtWidgets.QLabel("Журнал виконання:")
+        logs_label.setProperty("class", "title")
+        logs_layout.addWidget(logs_label)
+        
         self.txt_logs = QtWidgets.QPlainTextEdit()
         self.txt_logs.setReadOnly(True)
         self.txt_logs.setMaximumBlockCount(10000)
-        v.addWidget(self.txt_logs)
-        self.tabs.addTab(w, "Логи")
+        self.txt_logs.setMinimumHeight(400)
+        logs_layout.addWidget(self.txt_logs)
+        
+        logs_card = ModernLayouts.create_card_layout("📝 Журнал", logs_widget)
+        v.addWidget(logs_card)
+
+        self.tabs.addTab(w, "📋 Логи")
 
         # Перехоплення принтів: спростимо — просто виводимо ключові повідомлення з worker’а
         # За потреби можна замінити print_* на логер із handler’ом у GUI
@@ -287,6 +494,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.lbl_status.setText("Виконується…")
+        self.lbl_status.setStyleSheet("color: #d97706; background-color: #fffbeb; border-color: #f59e0b;")
         self._append_log("[GUI] ℹ️  Запуск експорту…")
         self._job_start_ts = time.monotonic()
         self._elapsed_timer.start()
@@ -297,17 +505,71 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.runner is not None:
             self.runner.stop()
             self._append_log("[GUI] ⚠️  Зупинка процесу…")
+    
+    def _clear_logs(self) -> None:
+        """Очищає всі логи"""
+        self.txt_logs.clear()
+        self._append_log("[GUI] ℹ️  Логи очищено")
+    
+    def _copy_logs(self) -> None:
+        """Копіює логи в буфер обміну"""
+        text = self.txt_logs.toPlainText()
+        if text:
+            clipboard = QtWidgets.QApplication.clipboard()
+            clipboard.setText(text)
+            self._append_log("[GUI] ✅ Логи скопійовано в буфер обміну")
+        else:
+            self._append_log("[GUI] ⚠️  Немає логів для копіювання")
+    
+    def _save_logs(self) -> None:
+        """Зберігає логи у файл"""
+        from PySide6.QtWidgets import QFileDialog
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Зберегти логи",
+            f"olap_export_logs_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+            "Текстові файли (*.txt);;Всі файли (*)"
+        )
+        
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(self.txt_logs.toPlainText())
+                self._append_log(f"[GUI] ✅ Логи збережено у файл: {file_path}")
+            except Exception as e:
+                self._append_log(f"[GUI] ❌ Помилка збереження логів: {e}")
+    
+    def _on_close_event(self, event) -> None:
+        """Обробка закриття вікна"""
+        try:
+            # Зупиняємо експорт якщо він запущений
+            if self.runner is not None:
+                self.runner.stop()
+                self.runner.wait(1000)  # Чекаємо 1 секунду
+            
+            # Зупиняємо таймер
+            if hasattr(self, '_elapsed_timer'):
+                self._elapsed_timer.stop()
+            
+            event.accept()
+        except Exception as e:
+            print(f"Помилка при закритті: {e}")
+            event.accept()
 
     def _on_finished(self, code: int) -> None:
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.lbl_status.setText("Готово")
-        self.runner = None
-        self._elapsed_timer.stop()
         if code == 0:
+            self.lbl_status.setStyleSheet("color: #059669; background-color: #ecfdf5; border-color: #10b981;")
             self._append_log("[GUI] ✅ Експорт завершено успішно")
         else:
+            self.lbl_status.setStyleSheet("color: #dc2626; background-color: #fef2f2; border-color: #ef4444;")
             self._append_log("[GUI] ❌ Експорт завершено з помилками")
+        
+        self.runner = None
+        self._elapsed_timer.stop()
 
     def _reset_progress(self) -> None:
         self.overall.setRange(0, 100)
@@ -318,6 +580,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_eta.setText("—")
         self.lbl_total_elapsed.setText("0.00 сек")
         self.list_files.clear()
+        
+        # Скидаємо стиль статусу
+        self.lbl_status.setStyleSheet("color: #059669; background-color: #ecfdf5; border-color: #10b981;")
 
     def _tick_elapsed(self) -> None:
         if self._job_start_ts is None:
