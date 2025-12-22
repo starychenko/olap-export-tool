@@ -165,3 +165,6 @@ result/
 # Confidential data and settings
 .env
 .credentials
+
+# Claude Code directory
+.claude/

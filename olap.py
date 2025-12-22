@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Гарантуємо UTF-8 вивід для GUI/QProcess середовища
+# Гарантуємо UTF-8 вивід для консолі
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")

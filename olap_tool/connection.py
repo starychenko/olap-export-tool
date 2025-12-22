@@ -28,11 +28,24 @@ def init_dotnet_and_providers():
     """Ініціалізує середовище .NET та завантажує необхідні провайдери."""
     adomd_dll_path = os.getenv("ADOMD_DLL_PATH")
     try:
+        # Перевірка версії Python
+        import sys
+        from pathlib import Path
+
+        # Попередження для Python 3.14+
+        if sys.version_info >= (3, 14):
+            print_warning(
+                f"УВАГА: Python {sys.version_info.major}.{sys.version_info.minor} не підтримується через несумісність pythonnet."
+            )
+            print_warning("Рекомендовано використовувати Python 3.13 або нижче.")
+            print_warning("Спроба ініціалізації pythonnet може завершитися помилкою.")
+
+        # НЕ використовуємо CoreCLR, оскільки System.Data.OleDb доступний тільки в .NET Framework
+        # pythonnet автоматично використає .NET Framework який встановлений в Windows
+
         import clr  # type: ignore
 
         if adomd_dll_path:
-            import sys
-
             # Перевіряємо, чи шлях вже існує, щоб не додавати його декілька разів
             if adomd_dll_path not in sys.path:
                 sys.path.append(adomd_dll_path)
@@ -45,8 +58,20 @@ def init_dotnet_and_providers():
         clr.AddReference("System.Data")
 
         from Microsoft.AnalysisServices.AdomdClient import AdomdConnection  # type: ignore
-        from System.Data.OleDb import OleDbConnection, OleDbCommand  # type: ignore
         from pyadomd import Pyadomd  # type: ignore
+
+        # Спроба імпорту OleDb - може не працювати без .NET Framework
+        OleDbConnection = None
+        OleDbCommand = None
+        try:
+            from System.Data.OleDb import OleDbConnection, OleDbCommand  # type: ignore
+        except Exception as oledb_error:
+            print_warning(
+                "[INIT] System.Data.OleDb недоступний. Підключення через LOGIN (логін/пароль) не буде працювати."
+            )
+            print_warning(
+                "[INIT] Для LOGIN режиму потрібен .NET Framework 4.x або встановлений MSOLAP провайдер."
+            )
 
         return Pyadomd, OleDbConnection, OleDbCommand
     except Exception as e:
@@ -242,25 +267,45 @@ def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
     auth_method = auth_details.get("Метод автентифікації", "")
 
     try:
-        # Логіка, ідентична старій версії:
-        # - Для "Логін/пароль" використовується OleDbConnection.
-        # - Для "SSPI" (Windows Auth) використовується Pyadomd.
+        # Логіка для LOGIN:
+        # - Спочатку пробуємо Pyadomd (ADOMD.NET) якщо доступний
+        # - Якщо не вдається, пробуємо OleDbConnection (MSOLAP)
 
         if "Логін/пароль" in auth_method:
-            if OleDbConnection is None or OleDbCommand is None:
-                print_error(
-                    "OleDb провайдер недоступний. Потрібний встановлений MSOLAP (System.Data.OleDb)."
+            # Спроба підключення через Pyadomd (ADOMD.NET) з User ID/Password
+            if Pyadomd is not None:
+                print_info(
+                    "Спроба підключення через Pyadomd (ADOMD.NET) для автентифікації за логіном/паролем"
                 )
-                return None
-            print_info(
-                "Використовуємо підключення через OleDbConnection для автентифікації за логіном/паролем"
-            )
-            oledb_connection, cursor = connect_using_oledb(
-                connection_string, auth_details, OleDbConnection, OleDbCommand
-            )
+                try:
+                    connection = Pyadomd(connection_string)
+                    connection.open()
+                    print_success("Підключення через Pyadomd (ADOMD.NET) успішне")
+                    # Зберігаємо креденшіали після успішного підключення
+                    username = auth_details.get("Користувач", "")
+                    password = connection_string.split("Password=")[1].split(";")[0] if "Password=" in connection_string else ""
+                    if username and password:
+                        use_encryption = os.getenv("OLAP_CREDENTIALS_ENCRYPTED", "false").lower() in ("true", "1", "yes")
+                        save_credentials(username, password, encrypted=use_encryption)
+                    return connection
+                except Exception as pyadomd_error:
+                    print_warning(f"Не вдалося підключитися через Pyadomd: {pyadomd_error}")
 
-            if oledb_connection and cursor:
-                return OleDbConnectionWrapper(oledb_connection, cursor)
+            # Фолбек на OleDb якщо Pyadomd не спрацював або недоступний
+            if OleDbConnection is not None and OleDbCommand is not None:
+                print_info(
+                    "Використовуємо підключення через OleDbConnection для автентифікації за логіном/паролем"
+                )
+                oledb_connection, cursor = connect_using_oledb(
+                    connection_string, auth_details, OleDbConnection, OleDbCommand
+                )
+
+                if oledb_connection and cursor:
+                    return OleDbConnectionWrapper(oledb_connection, cursor)
+            else:
+                print_error(
+                    "OleDb провайдер недоступний. Для LOGIN потрібен Pyadomd або MSOLAP (System.Data.OleDb)."
+                )
 
             # Логіка повторної спроби, якщо перша не вдалася
             if retry_count > 0:

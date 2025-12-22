@@ -14,41 +14,69 @@
 ---
 
 ## Вимоги
-- Windows, Python 3.8+.
+- Windows, **Python 3.13** (рекомендовано).
+  - Підтримується: Python 3.8 - 3.13
+  - **НЕ підтримується**: Python 3.14+ (через несумісність pythonnet з новими версіями Python)
+  - **Встановлення Python**: `setup.ps1` автоматично встановлює Python 3.13 в `%LOCALAPPDATA%\Programs\Python\Python313\` (тільки для поточного користувача)
 - Бібліотеки Python з `requirements.txt`.
 - Для SSPI: доступний ADOMD.NET (можна локально з папки `./lib`).
-- Для LOGIN: встановлений MSOLAP x64 (OLE DB Provider for Analysis Services).
+- Для LOGIN: доступний ADOMD.NET або встановлений MSOLAP x64 (OLE DB Provider for Analysis Services).
 
 ---
 
 ## Швидкий старт
+
+**Автоматичне встановлення (рекомендовано):**
+```powershell
+# Скрипт автоматично завантажить Python 3.13 якщо потрібно,
+# створить venv та встановить всі залежності
+.\setup.ps1
+```
+
+**Ручне встановлення:**
 ```powershell
 python -m venv venv
-./venv/Scripts/Activate.ps1
+.\venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 copy .env.example .env
-python olap.py
-```
-Альтернатива (скрипт підготовки):
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-./setup.ps1
 python olap.py
 ```
 
 ---
 
 ## Встановлення і запуск
-- SSPI (Windows-автентифікація)
-  - В `.env`: `OLAP_AUTH_METHOD=SSPI`, `ADOMD_DLL_PATH=./lib`.
-  - Запуск: `python olap.py`.
-- LOGIN (логін/пароль через MSOLAP)
-  - В `.env`: `OLAP_AUTH_METHOD=LOGIN`.
-  - Потрібен встановлений MSOLAP x64.
-  - Запуск: `python olap.py`.
-- Видалити збережені облікові дані: `python olap.py clear_credentials`.
 
-Порада (з дому під доменним користувачем у режимі SSPI):
+### Автоматичне встановлення
+Скрипт `setup.ps1` автоматично:
+- Перевіряє наявність Python 3.13
+- Завантажує та встановлює Python 3.13 якщо потрібно (в `%LOCALAPPDATA%\Programs\Python\Python313\`)
+- Створює віртуальне середовище
+- Встановлює всі залежності
+- Створює .env файл з .env.example
+
+```powershell
+.\setup.ps1
+```
+
+### Налаштування автентифікації
+
+**SSPI (Windows-автентифікація):**
+- В `.env`: `OLAP_AUTH_METHOD=SSPI`, `ADOMD_DLL_PATH=./lib`
+- Використовує поточного Windows користувача
+- Запуск: `python olap.py`
+
+**LOGIN (логін/пароль):**
+- В `.env`: `OLAP_AUTH_METHOD=LOGIN`
+- Підтримує два методи підключення:
+  1. **ADOMD.NET** (основний) - через `ADOMD_DLL_PATH=./lib`
+  2. **OleDb/MSOLAP** (фолбек) - потрібен встановлений MSOLAP x64
+- Запуск: `python olap.py`
+
+### Додаткові команди
+- Видалити збережені облікові дані: `python olap.py clear_credentials`
+
+### Порада для роботи з дому
+З дому під доменним користувачем у режимі SSPI:
 ```powershell
 runas /netonly /user:DOMAIN\user "C:\Path\to\venv\Scripts\python.exe C:\GIT\olap-export-tool\olap.py"
 ```
