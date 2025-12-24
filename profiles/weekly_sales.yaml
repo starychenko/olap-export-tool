@@ -1,0 +1,21 @@
+name: weekly_sales
+description: Щотижневий звіт по продажам електроніки
+created: '2025-12-24T10:00:00'
+updated: '2025-12-24T10:00:00'
+
+period:
+  type: auto
+  auto_type: last-weeks
+  auto_value: 4
+
+export:
+  format: xlsx
+  compress: none
+  streaming: true
+  min_format: false
+
+filter:
+  fg1_name: Споживча електроніка
+
+connection:
+  timeout: 3
