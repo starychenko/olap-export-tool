@@ -1,0 +1,33 @@
+query:
+  filter_fg1_name: null
+  year_week_start: null
+  year_week_end: null
+  timeout: 30
+
+export:
+  format: xlsx
+  force_csv_only: false
+  compress: none
+
+xlsx:
+  streaming: false
+  min_format: false
+
+csv:
+  delimiter: ";"
+  encoding: "utf-8-sig"
+  quoting: "minimal"
+
+excel_header:
+  color: "00365E"
+  font_color: "FFFFFF"
+  font_size: 11
+
+paths:
+  adomd_dll: "./lib"
+  result_dir: "result"
+
+display:
+  ascii_logs: false
+  debug: false
+  progress_update_interval_ms: 100

@@ -1,20 +1,24 @@
 import csv
 import math
-import os
+import threading
 from pathlib import Path
-from typing import Iterable, Tuple
+from typing import TYPE_CHECKING, Tuple
 
-import numpy as np
 import pandas as pd
 import xlsxwriter  # type: ignore
 
 from .utils import print_progress, convert_dotnet_to_python
 from . import progress
 
+if TYPE_CHECKING:
+    from .config import ExcelHeaderConfig, XlsxConfig
+
 
 def export_csv_stream(
     cursor, csv_path: Path, delimiter: str, encoding: str, quoting_mode: str
 ) -> int:
+    import re
+
     if quoting_mode == "all":
         quoting = csv.QUOTE_ALL
     elif quoting_mode == "nonnumeric":
@@ -23,32 +27,23 @@ def export_csv_stream(
         quoting = csv.QUOTE_MINIMAL
 
     raw_columns = [desc[0] for desc in cursor.description]
-    renamed_columns: list[str] = []
+    pattern = re.compile(r"(\w+)\[([^\]]+)\]")
     potential_names: dict[str, bool] = {}
     for col in raw_columns:
-        import re
+        match = pattern.match(col)
+        column_name = match.group(2) if match else col.strip("[]")
+        potential_names[column_name] = (
+            False if column_name in potential_names else True
+        )
 
-        match = re.match(r"(\w+)\[([^\]]+)\]", col)
-        if match:
-            column_name = match.group(2)
-            potential_names[column_name] = (
-                False if column_name in potential_names else True
-            )
-        else:
-            column_name = col.strip("[]")
-            potential_names[column_name] = (
-                False if column_name in potential_names else True
-            )
+    renamed_columns: list[str] = []
     for col in raw_columns:
-        import re
-
-        match = re.match(r"(\w+)\[([^\]]+)\]", col)
+        match = pattern.match(col)
         if match:
             column_name = match.group(2)
-            if potential_names.get(column_name, True):
-                renamed_columns.append(column_name)
-            else:
-                renamed_columns.append(col)
+            renamed_columns.append(
+                column_name if potential_names.get(column_name, True) else col
+            )
         else:
             renamed_columns.append(col.strip("[]"))
 
@@ -70,7 +65,13 @@ def export_csv_stream(
     return row_count
 
 
-def export_xlsx_dataframe(df: pd.DataFrame, file_path: Path, sheet_name: str) -> int:
+def export_xlsx_dataframe(
+    df: pd.DataFrame,
+    file_path: Path,
+    sheet_name: str,
+    excel_header: "ExcelHeaderConfig",
+    xlsx_config: "XlsxConfig",
+) -> int:
     print_progress(f"Експорт даних у Excel-файл {file_path}...")
     file_path_str = str(file_path)
     workbook = xlsxwriter.Workbook(file_path_str, {"constant_memory": True})
@@ -79,9 +80,9 @@ def export_xlsx_dataframe(df: pd.DataFrame, file_path: Path, sheet_name: str) ->
         {
             "bold": True,
             "font_name": "Arial",
-            "font_size": int(os.getenv("EXCEL_HEADER_FONT_SIZE", 11)),
-            "font_color": os.getenv("EXCEL_HEADER_FONT_COLOR", "FFFFFF"),
-            "bg_color": os.getenv("EXCEL_HEADER_COLOR", "00365E"),
+            "font_size": excel_header.font_size,
+            "font_color": excel_header.font_color,
+            "bg_color": excel_header.color,
             "align": "center",
             "valign": "vcenter",
             "text_wrap": True,
@@ -90,8 +91,7 @@ def export_xlsx_dataframe(df: pd.DataFrame, file_path: Path, sheet_name: str) ->
     )
     worksheet.write_row(0, 0, list(df.columns), header_format)
 
-    streaming = os.getenv("XLSX_STREAMING", "false").lower() in ("true", "1", "yes")
-    if streaming:
+    if xlsx_config.streaming:
         for row_idx, row_data in enumerate(df.itertuples(index=False), start=1):
             safe_row = []
             for cell_value in row_data:
@@ -115,35 +115,38 @@ def export_xlsx_dataframe(df: pd.DataFrame, file_path: Path, sheet_name: str) ->
                     safe_row.append(cell_value)
             worksheet.write_row(row_idx, 0, safe_row)
 
-    for col_num, column in enumerate(df.columns):
-        max_length = max(
-            len(str(column)),
-            (df.iloc[:, col_num].astype(str).str.len().max() if len(df) > 0 else 0),
-        )
-        column_width = min(max_length + 2, 100)
-        worksheet.set_column(col_num, col_num, column_width)
+    if not xlsx_config.min_format:
+        for col_num, column in enumerate(df.columns):
+            max_length = max(
+                len(str(column)),
+                (df.iloc[:, col_num].astype(str).str.len().max() if len(df) > 0 else 0),
+            )
+            column_width = min(max_length + 2, 100)
+            worksheet.set_column(col_num, col_num, column_width)
+        worksheet.freeze_panes(1, 0)
 
-    worksheet.freeze_panes(1, 0)
     workbook.close()
     return Path(file_path_str).stat().st_size
 
 
-def export_xlsx_stream(cursor, file_path: Path, sheet_name: str) -> Tuple[int, int]:
+def export_xlsx_stream(
+    cursor,
+    file_path: Path,
+    sheet_name: str,
+    excel_header: "ExcelHeaderConfig",
+    xlsx_config: "XlsxConfig",
+) -> Tuple[int, int]:
     """
     Стрімінговий експорт у XLSX без проміжного DataFrame.
     Повертає (row_count, file_size_bytes).
     """
+    import re as _re
+
     file_path_str = str(file_path)
-    # constant_memory зменшує пік пам'яті на великих наборах
     workbook = xlsxwriter.Workbook(file_path_str, {"constant_memory": True})
     worksheet = workbook.add_worksheet(sheet_name)
 
-    # Заголовки з легким форматуванням
-    min_format = os.getenv("XLSX_MIN_FORMAT", "false").lower() in ("true", "1", "yes")
     header_cells = [desc[0] for desc in cursor.description]
-
-    # Перейменування колонок аналогічно CSV‑стріму: уникаємо конфліктів
-    import re as _re
 
     pattern = _re.compile(r"(\w+)\[([^\]]+)\]")
     potential_names: dict[str, bool] = {}
@@ -163,16 +166,16 @@ def export_xlsx_stream(cursor, file_path: Path, sheet_name: str) -> Tuple[int, i
         else:
             renamed_columns.append(col.strip("[]"))
 
-    if min_format:
+    if xlsx_config.min_format:
         worksheet.write_row(0, 0, renamed_columns)
     else:
         header_format = workbook.add_format(
             {
                 "bold": True,
                 "font_name": "Arial",
-                "font_size": int(os.getenv("EXCEL_HEADER_FONT_SIZE", 11)),
-                "font_color": os.getenv("EXCEL_HEADER_FONT_COLOR", "FFFFFF"),
-                "bg_color": os.getenv("EXCEL_HEADER_COLOR", "00365E"),
+                "font_size": excel_header.font_size,
+                "font_color": excel_header.font_color,
+                "bg_color": excel_header.color,
                 "align": "center",
                 "valign": "vcenter",
                 "text_wrap": True,
@@ -181,12 +184,10 @@ def export_xlsx_stream(cursor, file_path: Path, sheet_name: str) -> Tuple[int, i
         )
         worksheet.write_row(0, 0, renamed_columns, header_format)
 
-    # Рядки даних: пишемо по одному, чистимо NaN/Inf → None
     row_count = 0
     row_idx = 1
-    # Спінер із лічильником рядків
-    stop_event = __import__("threading").Event()
-    spinner_thread = __import__("threading").Thread(
+    stop_event = threading.Event()
+    spinner_thread = threading.Thread(
         target=progress.streaming_spinner,
         args=(
             f"Експорт даних у Excel-файл {file_path} (streaming)",
@@ -195,28 +196,28 @@ def export_xlsx_stream(cursor, file_path: Path, sheet_name: str) -> Tuple[int, i
         ),
     )
     spinner_thread.start()
-    while True:
-        row = cursor.fetchone()
-        if row is None:
-            break
-        safe_row = []
-        for val in row:
-            py_val = convert_dotnet_to_python(val)
-            if isinstance(py_val, float) and (math.isnan(py_val) or math.isinf(py_val)):
-                py_val = None
-            safe_row.append(py_val)
-        worksheet.write_row(row_idx, 0, safe_row)
-        row_idx += 1
-        row_count += 1
-    # Зупиняємо спінер
-    stop_event.set()
     try:
-        spinner_thread.join(timeout=1.0)
-    except Exception:
-        pass
+        while True:
+            row = cursor.fetchone()
+            if row is None:
+                break
+            safe_row = []
+            for val in row:
+                py_val = convert_dotnet_to_python(val)
+                if isinstance(py_val, float) and (math.isnan(py_val) or math.isinf(py_val)):
+                    py_val = None
+                safe_row.append(py_val)
+            worksheet.write_row(row_idx, 0, safe_row)
+            row_idx += 1
+            row_count += 1
+    finally:
+        stop_event.set()
+        try:
+            spinner_thread.join(timeout=1.0)
+        except Exception:
+            pass
 
-    # У швидкому режимі пропускаємо автоширину та freeze panes
-    if not min_format:
+    if not xlsx_config.min_format:
         worksheet.freeze_panes(1, 0)
 
     workbook.close()

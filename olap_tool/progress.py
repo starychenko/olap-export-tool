@@ -1,5 +1,4 @@
 import itertools
-import os
 import sys
 import threading
 import time
@@ -11,23 +10,41 @@ from typing import Callable
 
 animation_running = False
 
-# ASCII fallback for consoles/environments without full Unicode support
-ASCII_MODE = os.getenv("OLAP_ASCII_LOGS", "false").lower() in ("true", "1", "yes")
-SPINNER_FRAMES = ["-", "\\", "|", "/"] if ASCII_MODE else [
-    "⣾",
-    "⣽",
-    "⣻",
-    "⢿",
-    "⡿",
-    "⣟",
-    "⣯",
-    "⣷",
+# Значення за замовчуванням — перевизначаються через init_display()
+_ascii_mode = False
+_debug = False
+_query_timeout = 30
+_progress_update_interval_ms = 100
+
+SPINNER_FRAMES = [
+    "⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷",
 ]
-COUNTDOWN_ICON = "*" if ASCII_MODE else "⏱️"
+COUNTDOWN_ICON = "⏱️"
+
+
+def init_display(
+    ascii_logs: bool = False,
+    debug: bool = False,
+    query_timeout: int = 30,
+    progress_update_interval_ms: int = 100,
+) -> None:
+    """Ініціалізація модуля після побудови конфігурації."""
+    global _ascii_mode, _debug, _query_timeout, _progress_update_interval_ms
+    global SPINNER_FRAMES, COUNTDOWN_ICON
+    _ascii_mode = ascii_logs
+    _debug = debug
+    _query_timeout = query_timeout
+    _progress_update_interval_ms = max(50, min(500, progress_update_interval_ms))
+    if _ascii_mode:
+        SPINNER_FRAMES = ["-", "\\", "|", "/"]
+        COUNTDOWN_ICON = "*"
+    else:
+        SPINNER_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+        COUNTDOWN_ICON = "⏱️"
 
 
 class TimeTracker:
-    def __init__(self, total_items: int):
+    def __init__(self, total_items: int, query_timeout: int | None = None, debug: bool | None = None):
         self.total_items = total_items
         self.processed_items = 0
         self.start_time = time.time()
@@ -35,6 +52,8 @@ class TimeTracker:
         self.waiting_times: list[float] = []
         self.last_item_end_time = self.start_time
         self.currently_waiting = False
+        self._query_timeout = query_timeout if query_timeout is not None else _query_timeout
+        self._debug = debug if debug is not None else _debug
 
     def start_waiting(self):
         self.currently_waiting = True
@@ -86,9 +105,8 @@ class TimeTracker:
         return avg_time_per_item * remaining_items
 
     def get_remaining_wait_time(self):
-        wait_time_per_item = int(os.getenv("QUERY_TIMEOUT", 30))
         remaining_items = max(0, self.total_items - self.processed_items - 1)
-        return wait_time_per_item * remaining_items
+        return self._query_timeout * remaining_items
 
     def get_remaining_time(self):
         processing_time = self.get_remaining_processing_time()
@@ -113,17 +131,9 @@ class TimeTracker:
 
     def get_progress_info(self):
         elapsed = self.get_elapsed_time()
-        processing_time = self.get_processing_time()
-        waiting_time = self.get_waiting_time()
-        remaining_processing = self.get_remaining_processing_time()
-        remaining_waiting = self.get_remaining_wait_time()
         remaining_total = self.get_remaining_time()
         total = self.get_total_time()
         percentage = self.get_percentage_complete()
-
-        debug_output = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")
-        if debug_output and self.elapsed_times and self.processed_items > 0:
-            pass  # скорочено: діагностичні друки залишені в оригіналі
 
         info = (
             f"Прогрес: {percentage:.1f}% ({self.processed_items}/{self.total_items})\n"
@@ -149,29 +159,23 @@ def loading_spinner(description: str, estimated_time: float | None = None):
         elapsed = time.time() - start_time
         elapsed_str = format_time(elapsed)
         message = f"{Fore.BLUE}[{get_current_time()}] {next(spinner)} {description} | Час: {elapsed_str}"
-        # Пишемо лише у старті рядка і очищуємо поточну лінію
         sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
         sys.stdout.write(message)
         sys.stdout.flush()
         time.sleep(0.1)
-    # Очищення рядка спінера
     sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
     sys.stdout.flush()
-    # Додатковий перенос рядка не друкуємо, щоб не ламати наступні логи
 
 
 def streaming_spinner(
-    description: str, stop_event: threading.Event, rows_fn: Callable[[], int]
+    description: str, stop_event: threading.Event, rows_fn: Callable[[], int],
+    update_interval_ms: int | None = None,
 ):
     """Анімація для стрімінгових експортів з відображенням кількості рядків і часу."""
     spinner = itertools.cycle(SPINNER_FRAMES)
     start_time = time.time()
     last_message = ""
-    # Інтервал оновлення, мс (за замовчуванням 100 мс). Діапазон: 50..500 мс
-    try:
-        interval_ms = int(os.getenv("PROGRESS_UPDATE_INTERVAL_MS", "100"))
-    except Exception:
-        interval_ms = 100
+    interval_ms = update_interval_ms if update_interval_ms is not None else _progress_update_interval_ms
     interval_ms = max(50, min(500, interval_ms))
     interval_s = interval_ms / 1000.0
     while not stop_event.is_set():
@@ -186,7 +190,6 @@ def streaming_spinner(
         sys.stdout.flush()
         last_message = message
         time.sleep(interval_s)
-    # Очищення рядка після завершення
     sys.stdout.write("\r" + " " * (len(last_message) + 2) + "\r")
     sys.stdout.flush()
 
@@ -194,11 +197,9 @@ def streaming_spinner(
 def countdown_timer(seconds: int):
     for remaining in range(seconds, 0, -1):
         time_left = format_time(remaining)
-        import sys as _sys
-
-        _sys.stdout.write(
+        sys.stdout.write(
             f"\r{Fore.YELLOW}[{get_current_time()}] {COUNTDOWN_ICON}  Очікування: залишилось {time_left}..."
         )
-        _sys.stdout.flush()
+        sys.stdout.flush()
         time.sleep(1)
     print()

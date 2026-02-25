@@ -1,9 +1,10 @@
 import datetime
 import re
-from pathlib import Path
-import math
-import os
 import csv
+import math
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 import pandas as pd
 
 from .utils import (
@@ -13,38 +14,13 @@ from .utils import (
     print_success,
     format_time,
     convert_dotnet_to_python,
+    ensure_dir,
 )
 from .exporter import export_csv_stream, export_xlsx_dataframe, export_xlsx_stream
 from . import progress
 
-
-def convert_dotnet_to_python(value):
-    import System  # type: ignore
-
-    if value is None:
-        return None
-    elif isinstance(value, System.DateTime):
-        return datetime.datetime(
-            value.Year,
-            value.Month,
-            value.Day,
-            value.Hour,
-            value.Minute,
-            value.Second,
-            microsecond=int(value.Millisecond * 1000),
-        )
-    elif isinstance(value, System.Decimal):
-        return float(value)
-    elif isinstance(value, System.DBNull):
-        return None
-    elif isinstance(value, (System.Int32, System.Int64)):
-        return int(value)
-    elif isinstance(value, System.String):
-        return str(value)
-    elif isinstance(value, System.Boolean):
-        return bool(value)
-    else:
-        return value
+if TYPE_CHECKING:
+    from .config import QueryConfig, ExportConfig, XlsxConfig, CsvConfig, ExcelHeaderConfig, PathsConfig
 
 
 def generate_year_week_pairs(start_period, end_period, available_weeks):
@@ -72,8 +48,11 @@ def generate_year_week_pairs(start_period, end_period, available_weeks):
     while cy < end_year or (cy == end_year and cw <= end_week):
         all_pairs.append((cy, cw))
         cw += 1
-        if cw > 53:
-            cw = 1  # коректний rollover
+        # Перевірка існування тижня через fromisocalendar
+        try:
+            datetime.date.fromisocalendar(cy, cw, 1)
+        except ValueError:
+            cw = 1
             cy += 1
     for year, week in all_pairs:
         if (year, week) in available_dict:
@@ -85,7 +64,16 @@ def generate_year_week_pairs(start_period, end_period, available_weeks):
     return filtered_pairs
 
 
-def run_dax_query(connection, reporting_period):
+def run_dax_query(
+    connection,
+    reporting_period: str,
+    query_config: "QueryConfig",
+    export_config: "ExportConfig",
+    xlsx_config: "XlsxConfig",
+    csv_config: "CsvConfig",
+    excel_header: "ExcelHeaderConfig",
+    paths_config: "PathsConfig",
+):
     try:
         year_num, week_num = map(int, reporting_period.split("-"))
     except (ValueError, AttributeError):
@@ -94,16 +82,12 @@ def run_dax_query(connection, reporting_period):
         )
         return []
 
-    filter_fg1_name = os.getenv("FILTER_FG1_NAME")
+    filter_fg1_name = query_config.filter_fg1_name
     escaped_filter_fg1 = (filter_fg1_name or "").replace('"', '""')
 
-    result_dir = Path("result")
+    result_dir = Path(paths_config.result_dir)
     year_dir = result_dir / str(year_num)
-    from .utils import ensure_dir
-
     ensure_dir(year_dir)
-    filename = f"{year_num}-{week_num:02d}.xlsx"
-    filepath = year_dir / filename
 
     print_info(f"Формування DAX запиту з параметрами:")
     from colorama import Fore
@@ -150,7 +134,7 @@ def run_dax_query(connection, reporting_period):
         "Використані бонуси", [bonus_used_amount],
         "Комісія по кредитам", [credit_commission_amount]
     )
-    ORDER BY 
+    ORDER BY
         'Calendar'[calendar_date] ASC,
         Goods[fg1_name] ASC,
         Goods[fg2_name] ASC,
@@ -193,30 +177,20 @@ def run_dax_query(connection, reporting_period):
         )
         spinner_thread.start()
 
-        export_format = os.getenv("EXPORT_FORMAT", "XLSX").upper()
-        force_csv_only = os.getenv("FORCE_CSV_ONLY", "false").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-        streaming_xlsx = os.getenv("XLSX_STREAMING", "false").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+        export_format = export_config.format.upper()
+        force_csv_only = export_config.force_csv_only
+        streaming_xlsx = xlsx_config.streaming
 
-        # Стрімінговий XLSX (без проміжного DataFrame): використовуємо поточний курсор, НЕ перевиконуємо запит
+        # Стрімінговий XLSX
         if export_format in ("XLSX", "BOTH") and not force_csv_only and streaming_xlsx:
-            # Коректно зупиняємо спінер перед друком нового рядка у консоль, щоб уникнути "злипання" рядків
             progress.animation_running = False
             spinner_thread.join(timeout=1.0)
             xlsx_path = year_dir / f"{year_num}-{week_num:02d}.xlsx"
             row_count, xlsx_size = export_xlsx_stream(
-                cursor, xlsx_path, f"{year_num}-{week_num:02d}"
+                cursor, xlsx_path, f"{year_num}-{week_num:02d}",
+                excel_header, xlsx_config,
             )
             query_duration = _time.time() - query_start_time
-            from colorama import Fore
-
             print_success(
                 f"Запит виконано за {format_time(query_duration)}. Отримано {row_count} рядків даних."
             )
@@ -224,36 +198,29 @@ def run_dax_query(connection, reporting_period):
                 f"Дані експортовано у файл: {Fore.WHITE}{str(xlsx_path)} {Fore.YELLOW}(рядків: {row_count})"
             )
             cursor.close()
-            # Якщо потрібно також CSV (BOTH), перевиконуємо запит для CSV стрімінгу
             if export_format == "BOTH":
-                delimiter = os.getenv("CSV_DELIMITER", ";")
-                encoding = os.getenv("CSV_ENCODING", "utf-8-sig")
-                quoting_mode = os.getenv("CSV_QUOTING", "minimal").lower()
                 csv_path = year_dir / f"{year_num}-{week_num:02d}.csv"
                 cursor = connection.cursor()
                 cursor.execute(query)
-                row_count_csv = export_csv_stream(
-                    cursor, csv_path, delimiter, encoding, quoting_mode
+                export_csv_stream(
+                    cursor, csv_path,
+                    csv_config.delimiter, csv_config.encoding, csv_config.quoting,
                 )
                 cursor.close()
                 print_success(
-                    f"Дані додатково експортовано у файл: {Fore.WHITE}{str(csv_path)} {Fore.YELLOW}(рядків: {row_count_csv})"
+                    f"Дані додатково експортовано у файл: {Fore.WHITE}{str(csv_path)}"
                 )
             return str(xlsx_path)
 
-        if export_format == "CSV":
+        if export_format == "CSV" or force_csv_only:
             csv_path = year_dir / f"{year_num}-{week_num:02d}.csv"
-            delimiter = os.getenv("CSV_DELIMITER", ";")
-            encoding = os.getenv("CSV_ENCODING", "utf-8-sig")
-            quoting_mode = os.getenv("CSV_QUOTING", "minimal").lower()
             row_count = export_csv_stream(
-                cursor, csv_path, delimiter, encoding, quoting_mode
+                cursor, csv_path,
+                csv_config.delimiter, csv_config.encoding, csv_config.quoting,
             )
             progress.animation_running = False
             spinner_thread.join(timeout=1.0)
             query_duration = _time.time() - query_start_time
-            from colorama import Fore
-
             print_success(
                 f"Запит виконано за {format_time(query_duration)}. Отримано {row_count} рядків даних."
             )
@@ -263,6 +230,7 @@ def run_dax_query(connection, reporting_period):
             cursor.close()
             return str(csv_path)
 
+        # DataFrame-based export
         rows = cursor.fetchall()
         progress.animation_running = False
         spinner_thread.join(timeout=1.0)
@@ -314,8 +282,6 @@ def run_dax_query(connection, reporting_period):
             print_warning(
                 "Деякі стовпці не були перейменовані через потенційне дублювання:"
             )
-            from colorama import Fore
-
             for col in duplicate_columns:
                 match = re.match(r"(\w+)\[([^\]]+)\]", col)
                 if match:
@@ -327,33 +293,29 @@ def run_dax_query(connection, reporting_period):
 
         df.rename(columns=renamed_columns, inplace=True)
 
-        export_format = os.getenv("EXPORT_FORMAT", "XLSX").upper()
         if export_format not in ["XLSX", "CSV", "BOTH"]:
             print_warning(
                 f"Невідомий формат експорту: {export_format}. Використовуємо XLSX."
             )
             export_format = "XLSX"
-        export_xlsx = export_format in ["XLSX", "BOTH"]
-        export_csv = export_format in ["CSV", "BOTH"]
+        export_xlsx_flag = export_format in ["XLSX", "BOTH"]
+        export_csv_flag = export_format in ["CSV", "BOTH"]
         exported_files = []
-        if export_xlsx and not (
-            os.getenv("FORCE_CSV_ONLY", "false").lower() in ("true", "1", "yes")
-        ):
+        if export_xlsx_flag and not force_csv_only:
             xlsx_path = year_dir / f"{year_num}-{week_num:02d}.xlsx"
             xlsx_size = export_xlsx_dataframe(
-                df, xlsx_path, f"{year_num}-{week_num:02d}"
+                df, xlsx_path, f"{year_num}-{week_num:02d}",
+                excel_header, xlsx_config,
             )
             exported_files.append((str(xlsx_path), xlsx_size))
-        if export_csv or force_csv_only:
-            delimiter = os.getenv("CSV_DELIMITER", ";")
-            encoding = os.getenv("CSV_ENCODING", "utf-8-sig")
-            quoting_mode = os.getenv("CSV_QUOTING", "minimal").lower()
+        if export_csv_flag or force_csv_only:
             csv_path = year_dir / f"{year_num}-{week_num:02d}.csv"
             df_replaced = df.replace([math.inf, -math.inf], None)
+            quoting_mode = csv_config.quoting.lower()
             df_replaced.to_csv(
                 str(csv_path),
-                sep=delimiter,
-                encoding=encoding,
+                sep=csv_config.delimiter,
+                encoding=csv_config.encoding,
                 index=False,
                 quoting=(
                     csv.QUOTE_MINIMAL
@@ -365,8 +327,6 @@ def run_dax_query(connection, reporting_period):
                 na_rep="",
             )
             exported_files.append((str(csv_path), Path(csv_path).stat().st_size))
-
-        from colorama import Fore
 
         for filepath, file_size_bytes in exported_files:
             if file_size_bytes < 1024 * 1024:
@@ -404,7 +364,7 @@ def get_available_weeks(connection):
         )
         ,NOT( ISBLANK( [sell_qty] ))
         )
-        ORDER BY 
+        ORDER BY
             'Calendar'[year_num] ASC,
             'Calendar'[week_num] ASC
         /* END QUERY BUILDER */

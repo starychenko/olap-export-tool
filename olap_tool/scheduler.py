@@ -5,7 +5,6 @@
 Підтримує простий формат розкладу та cron вирази.
 """
 
-import os
 import sys
 import time
 import signal
@@ -319,10 +318,3 @@ def daemon_mode(profiles: List[str]) -> int:
     return 0
 
 
-def stop_scheduler() -> None:
-    """
-    Зупинка планувальника (очищення всіх задач).
-    """
-    if schedule is not None:
-        schedule.clear()
-        print_info("Всі заплановані задачі видалено")

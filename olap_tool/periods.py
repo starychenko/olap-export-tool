@@ -15,19 +15,6 @@ from typing import List, Tuple
 from .utils import print_info, print_warning, print_error
 
 
-def get_iso_week_info(date: datetime.date) -> Tuple[int, int, int]:
-    """
-    Отримання інформації про ISO тиждень для заданої дати.
-
-    Args:
-        date: Дата для обробки
-
-    Returns:
-        Tuple[int, int, int]: (iso_year, iso_week, iso_weekday)
-    """
-    return date.isocalendar()
-
-
 def calculate_last_weeks(n: int) -> List[Tuple[int, int]]:
     """
     Розрахунок останніх N тижнів (включно з поточним).

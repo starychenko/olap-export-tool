@@ -1,13 +1,8 @@
 """
-Модуль для парсингу аргументів командного рядка та управління конфігурацією.
-
-Підтримує пріоритет конфігурації: CLI > Profile > .env > Defaults
+Модуль для парсингу аргументів командного рядка.
 """
 
 import argparse
-import os
-import sys
-from typing import Any
 
 from .utils import print_error, print_warning
 
@@ -116,7 +111,7 @@ def parse_arguments() -> argparse.Namespace:
         '--format',
         type=str,
         choices=['xlsx', 'csv', 'both'],
-        help='Формат експорту: xlsx, csv або both (за замовчуванням з .env)'
+        help='Формат експорту: xlsx, csv або both (за замовчуванням з config.yaml)'
     )
     export_group.add_argument(
         '--filter',
@@ -236,132 +231,3 @@ def validate_arguments(args: argparse.Namespace) -> bool:
         return False
 
     return True
-
-
-def merge_config(args: argparse.Namespace, profile_config: dict = None) -> dict:
-    """
-    Об'єднання конфігурації з різних джерел з урахуванням пріоритету:
-    CLI аргументи > Профіль > .env файл > Defaults
-
-    Args:
-        args: Розпарсені CLI аргументи
-        profile_config: Конфігурація з профілю (опційно)
-
-    Returns:
-        dict: Об'єднана конфігурація
-    """
-    # Базова конфігурація з .env
-    config = {
-        # OLAP connection
-        "OLAP_SERVER": os.getenv("OLAP_SERVER"),
-        "OLAP_DATABASE": os.getenv("OLAP_DATABASE"),
-        "OLAP_PORT": os.getenv("OLAP_PORT"),
-        "OLAP_HTTP_URL": os.getenv("OLAP_HTTP_URL"),
-        "OLAP_AUTH_METHOD": os.getenv("OLAP_AUTH_METHOD", "SSPI"),
-        "OLAP_DOMAIN": os.getenv("OLAP_DOMAIN"),
-        "OLAP_TIMEOUT": os.getenv("OLAP_TIMEOUT"),
-
-        # Credentials
-        "OLAP_CREDENTIALS_ENCRYPTED": os.getenv("OLAP_CREDENTIALS_ENCRYPTED", "true"),
-        "OLAP_CREDENTIALS_FILE": os.getenv("OLAP_CREDENTIALS_FILE", ".credentials"),
-        "OLAP_USE_MASTER_PASSWORD": os.getenv("OLAP_USE_MASTER_PASSWORD", "false"),
-        "OLAP_MASTER_PASSWORD": os.getenv("OLAP_MASTER_PASSWORD"),
-
-        # Query settings
-        "FILTER_FG1_NAME": os.getenv("FILTER_FG1_NAME"),
-        "YEAR_WEEK_START": os.getenv("YEAR_WEEK_START"),
-        "YEAR_WEEK_END": os.getenv("YEAR_WEEK_END"),
-        "QUERY_TIMEOUT": int(os.getenv("QUERY_TIMEOUT", 30)),
-
-        # Export settings
-        "EXPORT_FORMAT": os.getenv("EXPORT_FORMAT", "XLSX"),
-        "FORCE_CSV_ONLY": os.getenv("FORCE_CSV_ONLY", "false"),
-        "XLSX_STREAMING": os.getenv("XLSX_STREAMING", "false"),
-        "XLSX_MIN_FORMAT": os.getenv("XLSX_MIN_FORMAT", "false"),
-
-        # CSV settings
-        "CSV_DELIMITER": os.getenv("CSV_DELIMITER", ";"),
-        "CSV_ENCODING": os.getenv("CSV_ENCODING", "utf-8-sig"),
-        "CSV_QUOTING": os.getenv("CSV_QUOTING", "minimal"),
-
-        # Excel formatting
-        "EXCEL_HEADER_COLOR": os.getenv("EXCEL_HEADER_COLOR", "00365E"),
-        "EXCEL_HEADER_FONT_COLOR": os.getenv("EXCEL_HEADER_FONT_COLOR", "FFFFFF"),
-        "EXCEL_HEADER_FONT_SIZE": int(os.getenv("EXCEL_HEADER_FONT_SIZE", 11)),
-
-        # Other
-        "DEBUG": os.getenv("DEBUG", "false"),
-        "OLAP_ASCII_LOGS": os.getenv("OLAP_ASCII_LOGS", "false"),
-        "ADOMD_DLL_PATH": os.getenv("ADOMD_DLL_PATH", "./lib"),
-    }
-
-    # Перевизначення з профілю (якщо є)
-    if profile_config:
-        # Period settings
-        if "period" in profile_config:
-            period_cfg = profile_config["period"]
-            if period_cfg.get("type") == "manual":
-                config["YEAR_WEEK_START"] = period_cfg.get("start")
-                config["YEAR_WEEK_END"] = period_cfg.get("end")
-
-        # Export settings
-        if "export" in profile_config:
-            export_cfg = profile_config["export"]
-            if "format" in export_cfg:
-                config["EXPORT_FORMAT"] = export_cfg["format"].upper()
-            if "streaming" in export_cfg:
-                config["XLSX_STREAMING"] = "true" if export_cfg["streaming"] else "false"
-            if "min_format" in export_cfg:
-                config["XLSX_MIN_FORMAT"] = "true" if export_cfg["min_format"] else "false"
-
-        # Filter settings
-        if "filter" in profile_config:
-            filter_cfg = profile_config["filter"]
-            if "fg1_name" in filter_cfg:
-                config["FILTER_FG1_NAME"] = filter_cfg["fg1_name"]
-
-        # Connection settings
-        if "connection" in profile_config:
-            conn_cfg = profile_config["connection"]
-            if "timeout" in conn_cfg:
-                config["QUERY_TIMEOUT"] = conn_cfg["timeout"]
-
-    # Перевизначення з CLI аргументів (найвищий пріоритет)
-    if args.format:
-        config["EXPORT_FORMAT"] = args.format.upper()
-
-    if args.filter:
-        config["FILTER_FG1_NAME"] = args.filter
-
-    if args.timeout is not None:
-        config["QUERY_TIMEOUT"] = args.timeout
-
-    if args.debug:
-        config["DEBUG"] = "true"
-
-    # Compression (нова опція)
-    config["COMPRESS"] = "none"
-    if args.compress:
-        config["COMPRESS"] = args.compress
-    elif profile_config and "export" in profile_config:
-        compress_val = profile_config["export"].get("compress", "none")
-        config["COMPRESS"] = compress_val
-
-    return config
-
-
-def get_env_value(key: str, config: dict, default: Any = None) -> Any:
-    """
-    Отримання значення конфігурації з fallback на .env та default.
-
-    Args:
-        key: Ключ конфігурації
-        config: Словник конфігурації
-        default: Значення за замовчуванням
-
-    Returns:
-        Значення конфігурації
-    """
-    if key in config and config[key] is not None:
-        return config[key]
-    return os.getenv(key, default)

@@ -1,5 +1,3 @@
-import os
-import re
 from pathlib import Path
 
 from .security import (
@@ -10,15 +8,20 @@ from .security import (
     encrypt_credentials,
     decrypt_credentials,
 )
-from .utils import print_info, print_warning, print_error
+from .utils import print_info, print_error
 
 
 auth_username: str | None = None
 
 
-def save_credentials(username: str, password: str, encrypted: bool = False) -> bool:
+def save_credentials(
+    username: str,
+    password: str,
+    encrypted: bool = False,
+    credentials_file: str = ".credentials",
+) -> bool:
     global auth_username
-    credentials_file = Path(os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials"))
+    cred_path = Path(credentials_file)
     try:
         if encrypted:
             machine_id = get_machine_id()
@@ -28,15 +31,15 @@ def save_credentials(username: str, password: str, encrypted: bool = False) -> b
             )
             key, salt = generate_encryption_key(base_secret)
             encrypted_data = encrypt_credentials(username, password, key)
-            with open(credentials_file, "wb") as f:
+            with open(cred_path, "wb") as f:
                 f.write(salt)
                 f.write(b"\n")
                 f.write(encrypted_data)
         else:
-            with open(credentials_file, "w") as f:
+            with open(cred_path, "w") as f:
                 f.write(f"{username}:{password}")
 
-        secure_credentials_file(credentials_file)
+        secure_credentials_file(cred_path)
         auth_username = username
         return True
     except Exception as e:
@@ -44,42 +47,43 @@ def save_credentials(username: str, password: str, encrypted: bool = False) -> b
         return False
 
 
-def load_credentials(encrypted: bool = False):
+def load_credentials(
+    encrypted: bool = False,
+    credentials_file: str = ".credentials",
+    use_master_password: bool = False,
+    master_password: str | None = None,
+):
     global auth_username
-    credentials_file = Path(os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials"))
-    if not credentials_file.exists():
+    cred_path = Path(credentials_file)
+    if not cred_path.exists():
         return None, None
     try:
         if encrypted:
-            with open(credentials_file, "rb") as f:
+            with open(cred_path, "rb") as f:
                 content = f.read().split(b"\n", 1)
                 if len(content) < 2:
                     print_error("Невірний формат файлу облікових даних")
                     return None, None
                 salt, encrypted_data = content
                 machine_id = get_machine_id()
-                master_password = get_master_password()
+                mp = get_master_password(
+                    use_master_password=use_master_password,
+                    master_password=master_password,
+                )
                 base_secret = (
-                    f"{machine_id}:{master_password}" if master_password else machine_id
+                    f"{machine_id}:{mp}" if mp else machine_id
                 )
                 key, _ = generate_encryption_key(base_secret, salt)
                 username, password = decrypt_credentials(encrypted_data, key)
-                if (
-                    not (username and password)
-                    and (
-                        os.getenv("OLAP_USE_MASTER_PASSWORD", "false").lower()
-                        in ("true", "1", "yes")
-                    )
-                    and not os.getenv("OLAP_MASTER_PASSWORD")
-                ):
+                if not (username and password) and use_master_password and not master_password:
                     try:
                         import getpass
                         from colorama import Fore
 
-                        mp = getpass.getpass(
-                            f"{Fore.CYAN}Введіть майстер‑пароль для розшифрування: {Fore.RESET}"
+                        mp_retry = getpass.getpass(
+                            f"{Fore.CYAN}Введіть майстер-пароль для розшифрування: {Fore.RESET}"
                         )
-                        base_secret_retry = f"{machine_id}:{mp}" if mp else machine_id
+                        base_secret_retry = f"{machine_id}:{mp_retry}" if mp_retry else machine_id
                         key_retry, _ = generate_encryption_key(base_secret_retry, salt)
                         username, password = decrypt_credentials(
                             encrypted_data, key_retry
@@ -91,11 +95,11 @@ def load_credentials(encrypted: bool = False):
                     auth_username = username
                     return username, password
                 print_error(
-                    "Не вдалося розшифрувати облікові дані. Перевірте налаштування майстер‑пароля."
+                    "Не вдалося розшифрувати облікові дані. Перевірте налаштування майстер-пароля."
                 )
                 return None, None
         else:
-            with open(credentials_file, "r") as f:
+            with open(cred_path, "r") as f:
                 content = f.read().strip()
                 if ":" not in content:
                     print_error("Невірний формат файлу облікових даних")
@@ -108,13 +112,13 @@ def load_credentials(encrypted: bool = False):
         return None, None
 
 
-def delete_credentials() -> bool:
+def delete_credentials(credentials_file: str = ".credentials") -> bool:
     global auth_username
-    credentials_file = Path(os.getenv("OLAP_CREDENTIALS_FILE", ".olap_credentials"))
-    if not credentials_file.exists():
+    cred_path = Path(credentials_file)
+    if not cred_path.exists():
         return True
     try:
-        credentials_file.unlink()
+        cred_path.unlink()
         auth_username = None
         return True
     except Exception as e:

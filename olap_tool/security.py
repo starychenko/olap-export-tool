@@ -1,7 +1,7 @@
 import base64
 import os
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -13,6 +13,7 @@ from .utils import print_info, print_warning, print_error
 def get_machine_id() -> str:
     try:
         identifiers: list[str] = []
+        # OS-identity vars — не є конфігурацією додатку
         computer_name = os.environ.get("COMPUTERNAME", "")
         if computer_name:
             identifiers.append(computer_name)
@@ -45,7 +46,7 @@ def get_machine_id() -> str:
 
         unique_id = "-".join(identifiers)
         if not unique_id:
-            unique_id = f"windows-fallback"
+            unique_id = "windows-fallback"
             print_warning(
                 "Не вдалося отримати стабільні ідентифікатори системи, використовуємо запасний варіант"
             )
@@ -72,25 +73,23 @@ def generate_encryption_key(
     return key, salt
 
 
-def get_master_password() -> str | None:
-    import sys
-    import getpass
-    from colorama import Fore
-
-    use_master = os.getenv("OLAP_USE_MASTER_PASSWORD", "false").lower() in (
-        "true",
-        "1",
-        "yes",
-    )
-    if not use_master:
+def get_master_password(
+    use_master_password: bool = False,
+    master_password: Optional[str] = None,
+) -> str | None:
+    """Повертає майстер-пароль із параметрів або інтерактивного вводу."""
+    if not use_master_password:
         return None
-    master_env = os.getenv("OLAP_MASTER_PASSWORD")
-    if master_env:
-        return master_env
+    if master_password:
+        return master_password
     try:
+        import sys
+        import getpass
+        from colorama import Fore
+
         if sys.stdin and sys.stdin.isatty():
             mp = getpass.getpass(
-                f"{Fore.CYAN}Введіть майстер‑пароль для шифрування (залиште порожнім, щоб пропустити): {Fore.RESET}"
+                f"{Fore.CYAN}Введіть майстер-пароль для шифрування (залиште порожнім, щоб пропустити): {Fore.RESET}"
             )
             return mp if mp else None
     except Exception:
@@ -103,7 +102,7 @@ def secure_credentials_file(file_path: Path):
         if os.name == "nt":
             import subprocess
 
-            cmd = f'icacls "{str(file_path)}" /inheritance:r /grant:r "{os.getenv("USERNAME", "")}":F /C'
+            cmd = f'icacls "{str(file_path)}" /inheritance:r /grant:r "{os.environ.get("USERNAME", "")}":F /C'
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             if result.returncode != 0:
                 print_warning(

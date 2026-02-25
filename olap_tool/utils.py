@@ -1,28 +1,40 @@
 import datetime
-import os
-import sys
 from colorama import init, Fore, Style
 
 
 init(autoreset=True)
 
 
-# Визначення набору символів для логів (емодзі або ASCII-фолбек)
-_ascii_logs = os.getenv("OLAP_ASCII_LOGS", "false").lower() in ("true", "1", "yes")
-if _ascii_logs:
-    ICON_INFO = "i"
-    ICON_WARN = "!"
-    ICON_ERR = "x"
-    ICON_OK = "+"
-    ICON_PROGRESS = "*"
-    ICON_STOP = "X"
-else:
-    ICON_INFO = "ℹ️"
-    ICON_WARN = "⚠️"
-    ICON_ERR = "❌"
-    ICON_OK = "✅"
-    ICON_PROGRESS = "🔄"
-    ICON_STOP = "🛑"
+# Набір символів для логів — налаштовується через init_utils()
+_ascii_logs = False
+
+ICON_INFO = "ℹ️"
+ICON_WARN = "⚠️"
+ICON_ERR = "❌"
+ICON_OK = "✅"
+ICON_PROGRESS = "🔄"
+ICON_STOP = "🛑"
+
+
+def init_utils(ascii_logs: bool = False) -> None:
+    """Ініціалізація модуля після побудови конфігурації."""
+    global _ascii_logs
+    global ICON_INFO, ICON_WARN, ICON_ERR, ICON_OK, ICON_PROGRESS, ICON_STOP
+    _ascii_logs = ascii_logs
+    if _ascii_logs:
+        ICON_INFO = "i"
+        ICON_WARN = "!"
+        ICON_ERR = "x"
+        ICON_OK = "+"
+        ICON_PROGRESS = "*"
+        ICON_STOP = "X"
+    else:
+        ICON_INFO = "ℹ️"
+        ICON_WARN = "⚠️"
+        ICON_ERR = "❌"
+        ICON_OK = "✅"
+        ICON_PROGRESS = "🔄"
+        ICON_STOP = "🛑"
 
 
 def ensure_dir(pathlike):
@@ -114,7 +126,6 @@ def convert_dotnet_to_python(value):
         return None
     if System is not None:
         if isinstance(value, System.DateTime):
-            # Перетворюємо у python datetime або ISO‑рядок (xlsxwriter підтримує datetime, але без tz)
             dt = datetime.datetime(
                 value.Year,
                 value.Month,
@@ -135,5 +146,4 @@ def convert_dotnet_to_python(value):
             return str(value)
         if isinstance(value, System.Boolean):
             return bool(value)
-    # Фолбек: повертаємо як є
     return value

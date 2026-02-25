@@ -1,8 +1,7 @@
-import os
-import re
+import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-# Припускаємо, що ці функції знаходяться у відповідних файлах .auth та .utils
 from .auth import (
     save_credentials,
     load_credentials,
@@ -19,20 +18,24 @@ from .utils import (
     print_tech_error,
 )
 
+if TYPE_CHECKING:
+    from .config import SecretsConfig
+
 # Константи для методів автентифікації
 AUTH_SSPI = "SSPI"
 AUTH_LOGIN = "LOGIN"
 
 
-def init_dotnet_and_providers():
-    """Ініціалізує середовище .NET та завантажує необхідні провайдери."""
-    adomd_dll_path = os.getenv("ADOMD_DLL_PATH")
-    try:
-        # Перевірка версії Python
-        import sys
-        from pathlib import Path
+def _escape_conn_str_value(value: str) -> str:
+    """Обгортає значення у подвійні лапки якщо воно містить спецсимволи connection string."""
+    if any(ch in value for ch in (";", "=", "{", "}")):
+        return f'"{value}"'
+    return value
 
-        # Попередження для Python 3.14+
+
+def init_dotnet_and_providers(adomd_dll_path: str = ""):
+    """Ініціалізує середовище .NET та завантажує необхідні провайдери."""
+    try:
         if sys.version_info >= (3, 14):
             print_warning(
                 f"УВАГА: Python {sys.version_info.major}.{sys.version_info.minor} не підтримується через несумісність pythonnet."
@@ -40,18 +43,14 @@ def init_dotnet_and_providers():
             print_warning("Рекомендовано використовувати Python 3.13 або нижче.")
             print_warning("Спроба ініціалізації pythonnet може завершитися помилкою.")
 
-        # НЕ використовуємо CoreCLR, оскільки System.Data.OleDb доступний тільки в .NET Framework
-        # pythonnet автоматично використає .NET Framework який встановлений в Windows
-
         import clr  # type: ignore
 
         if adomd_dll_path:
-            # Перевіряємо, чи шлях вже існує, щоб не додавати його декілька разів
             if adomd_dll_path not in sys.path:
                 sys.path.append(adomd_dll_path)
         else:
             print(
-                "[INIT] Попередження: Змінна ADOMD_DLL_PATH не задана. Перевірте .env"
+                "[INIT] Попередження: Шлях ADOMD_DLL_PATH не задано. Перевірте config.yaml або .env"
             )
 
         clr.AddReference("Microsoft.AnalysisServices.AdomdClient")
@@ -60,12 +59,11 @@ def init_dotnet_and_providers():
         from Microsoft.AnalysisServices.AdomdClient import AdomdConnection  # type: ignore
         from pyadomd import Pyadomd  # type: ignore
 
-        # Спроба імпорту OleDb - може не працювати без .NET Framework
         OleDbConnection = None
         OleDbCommand = None
         try:
             from System.Data.OleDb import OleDbConnection, OleDbCommand  # type: ignore
-        except Exception as oledb_error:
+        except Exception:
             print_warning(
                 "[INIT] System.Data.OleDb недоступний. Підключення через LOGIN (логін/пароль) не буде працювати."
             )
@@ -79,11 +77,11 @@ def init_dotnet_and_providers():
         return None, None, None
 
 
-def get_connection_string():
-    """Формує рядок підключення та деталі автентифікації на основі .env."""
-    server = os.getenv("OLAP_SERVER")
-    database = os.getenv("OLAP_DATABASE")
-    auth_method = os.getenv("OLAP_AUTH_METHOD", AUTH_SSPI).upper()
+def get_connection_string(secrets: "SecretsConfig"):
+    """Формує рядок підключення та деталі автентифікації на основі SecretsConfig."""
+    server = secrets.server
+    database = secrets.database
+    auth_method = secrets.auth_method.upper()
 
     connection_string = (
         f"Provider=MSOLAP;Data Source={server};Initial Catalog={database};"
@@ -97,27 +95,33 @@ def get_connection_string():
             "Поточний користувач": get_current_windows_user(),
         }
     elif auth_method == AUTH_LOGIN:
-        use_encryption = os.getenv("OLAP_CREDENTIALS_ENCRYPTED", "false").lower() in (
-            "true",
-            "1",
-            "yes",
+        username, password = load_credentials(
+            encrypted=secrets.credentials_encrypted,
+            credentials_file=secrets.credentials_file,
+            use_master_password=secrets.use_master_password,
+            master_password=secrets.master_password,
         )
-        username, password = load_credentials(encrypted=use_encryption)
 
         if not username or not password:
             print_info("Облікові дані не знайдені або пошкоджені.")
-            delete_credentials()
-            username, password = prompt_credentials(with_domain=True)
+            delete_credentials(credentials_file=secrets.credentials_file)
+            username, password = prompt_credentials(
+                with_domain=True, domain=secrets.domain
+            )
 
         if username and password:
-            connection_string += f"User ID={username};Password={password};Persist Security Info=True;Update Isolation Level=2;"
+            safe_uid = _escape_conn_str_value(username)
+            safe_pwd = _escape_conn_str_value(password)
+            connection_string += f"User ID={safe_uid};Password={safe_pwd};Persist Security Info=True;Update Isolation Level=2;"
             auth_details = {
                 "Метод автентифікації": "Логін/пароль",
                 "Користувач": username,
                 "Пароль": "********",
+                # Зберігаємо для явної передачі — не парсимо з connection string
+                "_username": username,
+                "_password": password,
             }
         else:
-            # Фолбек на SSPI, якщо облікові дані не були надані
             print_warning(
                 "Облікові дані не вказані. Використовуємо Windows-автентифікацію (SSPI)."
             )
@@ -128,7 +132,6 @@ def get_connection_string():
                 "Причина": "Облікові дані не вказані",
             }
     else:
-        # Фолбек на SSPI для невідомих методів
         print_warning(
             f"Невідомий метод автентифікації '{auth_method}'. Використовуємо SSPI."
         )
@@ -220,33 +223,30 @@ class OleDbConnectionWrapper:
             pass
 
 
-def connect_using_oledb(connection_string, auth_details, OleDbConnection, OleDbCommand):
+def connect_using_oledb(connection_string, auth_details, OleDbConnection, OleDbCommand, secrets: "SecretsConfig"):
     """Встановлює з'єднання через OleDb і зберігає облікові дані при успіху."""
     try:
         print_info_detail(
-            f"Підключення до OLAP сервера {os.getenv('OLAP_SERVER')} через OleDb...",
-            auth_details,
+            f"Підключення до OLAP сервера {secrets.server} через OleDb...",
+            {k: v for k, v in auth_details.items() if not k.startswith("_")},
         )
         connection = OleDbConnection(connection_string)
         connection.Open()
         cursor = OleDbCursor(connection, OleDbCommand)
         print_success("Підключення до OLAP сервера через OleDb успішно встановлено")
 
-        # Збереження облікових даних після успішного підключення
-        user_match = re.search(r"User ID=([^;]+)", connection_string, re.IGNORECASE)
-        password_match = re.search(
-            r"Password=([^;]+)", connection_string, re.IGNORECASE
-        )
-        if user_match and password_match:
-            username = user_match.group(1)
-            password = password_match.group(1)
-            use_encryption = os.getenv(
-                "OLAP_CREDENTIALS_ENCRYPTED", "false"
-            ).lower() in ("true", "1", "yes")
-            if save_credentials(username, password, encrypted=use_encryption):
+        # Зберігаємо через явні дані, не парсимо з connection string
+        username = auth_details.get("_username")
+        password = auth_details.get("_password")
+        if username and password:
+            if save_credentials(
+                username, password,
+                encrypted=secrets.credentials_encrypted,
+                credentials_file=secrets.credentials_file,
+            ):
                 print_success(
                     "Облікові дані успішно збережено"
-                    + (" (зашифровано)" if use_encryption else "")
+                    + (" (зашифровано)" if secrets.credentials_encrypted else "")
                 )
 
         return connection, cursor
@@ -255,24 +255,23 @@ def connect_using_oledb(connection_string, auth_details, OleDbConnection, OleDbC
         return None, None
 
 
-def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
-    """
-    Основна функція для підключення до OLAP, яка відтворює логіку старого скрипту.
-    """
-    Pyadomd, OleDbConnection, OleDbCommand = init_dotnet_and_providers()
+def connect_to_olap(
+    secrets: "SecretsConfig",
+    adomd_dll_path: str = "",
+    connection_string=None,
+    auth_details=None,
+    retry_count=1,
+):
+    """Основна функція для підключення до OLAP."""
+    Pyadomd, OleDbConnection, OleDbCommand = init_dotnet_and_providers(adomd_dll_path)
 
     if connection_string is None:
-        connection_string, auth_details = get_connection_string()
+        connection_string, auth_details = get_connection_string(secrets)
 
     auth_method = auth_details.get("Метод автентифікації", "")
 
     try:
-        # Логіка для LOGIN:
-        # - Спочатку пробуємо Pyadomd (ADOMD.NET) якщо доступний
-        # - Якщо не вдається, пробуємо OleDbConnection (MSOLAP)
-
         if "Логін/пароль" in auth_method:
-            # Спроба підключення через Pyadomd (ADOMD.NET) з User ID/Password
             if Pyadomd is not None:
                 print_info(
                     "Спроба підключення через Pyadomd (ADOMD.NET) для автентифікації за логіном/паролем"
@@ -281,23 +280,25 @@ def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
                     connection = Pyadomd(connection_string)
                     connection.open()
                     print_success("Підключення через Pyadomd (ADOMD.NET) успішне")
-                    # Зберігаємо креденшіали після успішного підключення
-                    username = auth_details.get("Користувач", "")
-                    password = connection_string.split("Password=")[1].split(";")[0] if "Password=" in connection_string else ""
+                    # Зберігаємо через явні дані
+                    username = auth_details.get("_username")
+                    password = auth_details.get("_password")
                     if username and password:
-                        use_encryption = os.getenv("OLAP_CREDENTIALS_ENCRYPTED", "false").lower() in ("true", "1", "yes")
-                        save_credentials(username, password, encrypted=use_encryption)
+                        save_credentials(
+                            username, password,
+                            encrypted=secrets.credentials_encrypted,
+                            credentials_file=secrets.credentials_file,
+                        )
                     return connection
                 except Exception as pyadomd_error:
                     print_warning(f"Не вдалося підключитися через Pyadomd: {pyadomd_error}")
 
-            # Фолбек на OleDb якщо Pyadomd не спрацював або недоступний
             if OleDbConnection is not None and OleDbCommand is not None:
                 print_info(
                     "Використовуємо підключення через OleDbConnection для автентифікації за логіном/паролем"
                 )
                 oledb_connection, cursor = connect_using_oledb(
-                    connection_string, auth_details, OleDbConnection, OleDbCommand
+                    connection_string, auth_details, OleDbConnection, OleDbCommand, secrets
                 )
 
                 if oledb_connection and cursor:
@@ -307,23 +308,33 @@ def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
                     "OleDb провайдер недоступний. Для LOGIN потрібен Pyadomd або MSOLAP (System.Data.OleDb)."
                 )
 
-            # Логіка повторної спроби, якщо перша не вдалася
             if retry_count > 0:
                 print_warning(
                     "Не вдалося підключитися. Спробуйте ввести облікові дані ще раз."
                 )
-                delete_credentials()
-                new_username, new_password = prompt_credentials(with_domain=True)
+                delete_credentials(credentials_file=secrets.credentials_file)
+                new_username, new_password = prompt_credentials(
+                    with_domain=True, domain=secrets.domain
+                )
                 if new_username and new_password:
-                    # Створюємо новий рядок підключення та деталі
-                    new_connection_string = f"Provider=MSOLAP;Data Source={os.getenv('OLAP_SERVER')};Initial Catalog={os.getenv('OLAP_DATABASE')};User ID={new_username};Password={new_password};Persist Security Info=True;Update Isolation Level=2;"
+                    safe_uid = _escape_conn_str_value(new_username)
+                    safe_pwd = _escape_conn_str_value(new_password)
+                    new_connection_string = (
+                        f"Provider=MSOLAP;Data Source={secrets.server};"
+                        f"Initial Catalog={secrets.database};"
+                        f"User ID={safe_uid};Password={safe_pwd};"
+                        f"Persist Security Info=True;Update Isolation Level=2;"
+                    )
                     new_auth_details = {
                         "Метод автентифікації": "Логін/пароль",
                         "Користувач": new_username,
                         "Пароль": "********",
+                        "_username": new_username,
+                        "_password": new_password,
                     }
                     return connect_to_olap(
-                        new_connection_string, new_auth_details, retry_count - 1
+                        secrets, adomd_dll_path,
+                        new_connection_string, new_auth_details, retry_count - 1,
                     )
 
             print_error(
@@ -338,8 +349,8 @@ def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
                 )
                 return None
             print_info_detail(
-                f"Підключення до OLAP сервера {os.getenv('OLAP_SERVER')} через ADOMD.NET (SSPI)...",
-                auth_details,
+                f"Підключення до OLAP сервера {secrets.server} через ADOMD.NET (SSPI)...",
+                {k: v for k, v in auth_details.items() if not k.startswith("_")},
             )
             connection = Pyadomd(connection_string)
             connection.open()
@@ -350,5 +361,4 @@ def connect_to_olap(connection_string=None, auth_details=None, retry_count=1):
 
     except Exception as e:
         print_tech_error("Помилка підключення до OLAP сервера", e)
-        # Тут можна додати більш детальну обробку помилок, як у старому скрипті
         return None
