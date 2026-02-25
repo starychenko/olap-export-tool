@@ -17,4 +17,4 @@ export:
   compress: none
 
 xlsx:
-  streaming: true
+  streaming: false
