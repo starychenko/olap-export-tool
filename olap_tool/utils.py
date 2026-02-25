@@ -146,4 +146,8 @@ def convert_dotnet_to_python(value):
             return str(value)
         if isinstance(value, System.Boolean):
             return bool(value)
-    return value
+    # Невідомий .NET тип — конвертуємо в str, щоб xlsxwriter не падав
+    try:
+        return str(value)
+    except Exception:
+        return None

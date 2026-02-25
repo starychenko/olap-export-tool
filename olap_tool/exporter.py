@@ -57,9 +57,10 @@ def export_csv_stream(
                 break
             converted_row = []
             for val in row:
-                if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
-                    val = None
-                converted_row.append(val)
+                py_val = convert_dotnet_to_python(val)
+                if isinstance(py_val, float) and (math.isnan(py_val) or math.isinf(py_val)):
+                    py_val = None
+                converted_row.append(py_val)
             writer.writerow(converted_row)
             row_count += 1
     return row_count

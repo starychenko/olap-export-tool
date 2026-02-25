@@ -343,6 +343,12 @@ def run_dax_query(
         print_error(f"Помилка при виконанні запиту: {e}")
         return None
     finally:
+        # Закриваємо курсор, щоб звільнити XmlReader на з'єднанні
+        if 'cursor' in locals() and cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
         if spinner_thread is not None:
             progress.animation_running = False
             try:
