@@ -126,21 +126,17 @@ def convert_dotnet_to_python(value):
         return None
     if System is not None:
         if isinstance(value, System.DateTime):
-            dt = datetime.datetime(
-                value.Year,
-                value.Month,
-                value.Day,
-                value.Hour,
-                value.Minute,
-                value.Second,
-                microsecond=int(value.Millisecond * 1000),
-            )
-            return dt
+            # Повертаємо Excel-серійний номер (int) — як зберігалось раніше
+            epoch = datetime.date(1899, 12, 30)
+            d = datetime.date(value.Year, value.Month, value.Day)
+            return (d - epoch).days
+        if isinstance(value, (System.Double, System.Single)):
+            return float(value)
         if isinstance(value, System.Decimal):
             return float(value)
         if isinstance(value, System.DBNull):
             return None
-        if isinstance(value, (System.Int32, System.Int64)):
+        if isinstance(value, (System.Int32, System.Int64, System.UInt32, System.UInt64)):
             return int(value)
         if isinstance(value, System.String):
             return str(value)
