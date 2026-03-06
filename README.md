@@ -1,6 +1,6 @@
 # OLAP Export Tool
 
-Інструмент для автоматизованого експорту даних з OLAP кубів (Microsoft Analysis Services) у файли Excel та CSV з підтримкою CLI, YAML-конфігурації, профілів, планувальника та автоматичних періодів.
+Інструмент для автоматизованого експорту даних з OLAP кубів (Microsoft Analysis Services) у файли Excel та CSV з підтримкою CLI, YAML-конфігурації, профілів, планувальника, автоматичних періодів та завантаження у ClickHouse.
 
 ## Основні можливості
 
@@ -13,6 +13,7 @@
 - **Два методи аутентифікації** — Windows (SSPI) та Логін/Пароль
 - **Шифрування облікових даних** — безпечне зберігання паролів з прив'язкою до машини
 - **Потоковий експорт** — ефективна робота з великими наборами даних
+- **ClickHouse інтеграція** — завантаження експортованих даних у ClickHouse з паралельним імпортом
 
 ## Вимоги
 
@@ -35,6 +36,9 @@ pip install -r requirements.txt
 - `schedule` — планувальник задач
 - `cryptography` — шифрування облікових даних
 - `python-dotenv`, `colorama` — завантаження .env та кольоровий вивід
+- `clickhouse-connect` — завантаження даних у ClickHouse
+- `python-calamine` — швидке читання Excel (Rust, 3-10x швидше за openpyxl)
+- `rich` — інтерактивний термінальний UI (progress bar, панелі, таблиці)
 
 ## Швидкий старт
 
@@ -213,6 +217,84 @@ python olap.py --profile weekly_sales --daemon
 "every 3 days at 14:30"
 ```
 
+## ClickHouse інтеграція
+
+### Опис
+
+Інструмент підтримує завантаження експортованих XLSX-файлів у ClickHouse. Модуль `olap_tool/clickhouse_export.py` надає повний набір функцій для роботи з ClickHouse, а скрипт `import_xlsx_to_clickhouse.py` забезпечує паралельний пакетний імпорт.
+
+**Ключові особливості:**
+- Ідемпотентна вставка — перед кожним INSERT видаляє дані за `year_num + week_num`
+- Автоматичне створення БД та таблиці зі схемою з DataFrame
+- Schema evolution — автоматично додає нові колонки через `ALTER TABLE`
+- Thread-local клієнти — одне з'єднання на потік без перевідкриття
+- Кешована схема таблиці — один запит `system.columns` на весь batch
+- Читання Excel через python-calamine (Rust, 3-10x швидше за openpyxl)
+
+### Налаштування
+
+Додайте в `.env` параметри ClickHouse:
+
+```bash
+CH_ENABLED=true
+CH_HOST=your-clickhouse-host
+CH_PORT=8443
+CH_USERNAME=default
+CH_PASSWORD=your_password
+CH_SECURE=true
+CH_DATABASE=olap_export
+CH_TABLE=sales
+```
+
+### Пакетний імпорт XLSX → ClickHouse
+
+```bash
+# Імпорт всіх файлів з директорії result/ (4 паралельних воркери)
+python import_xlsx_to_clickhouse.py
+
+# 8 паралельних воркерів
+python import_xlsx_to_clickhouse.py --workers 8
+
+# Тільки 2025 рік
+python import_xlsx_to_clickhouse.py --year 2025
+
+# Конкретний тиждень
+python import_xlsx_to_clickhouse.py --year 2025 --week 10
+
+# Показати файли без завантаження (dry run)
+python import_xlsx_to_clickhouse.py --dry-run
+```
+
+Скрипт відображає прогрес у реальному часі:
+```
+✅ 2025-44    18,486 рядків  0.8с
+✅ 2025-43   143,920 рядків  1.2с
+✅ 2025-42   139,810 рядків  1.1с
+```
+
+### Пряме завантаження під час експорту
+
+Для завантаження у ClickHouse разом з XLSX-експортом налаштуйте в `config.yaml`:
+
+```yaml
+clickhouse:
+  enabled: true
+```
+
+Або через CLI:
+```bash
+python olap.py --last-weeks 4 --format ch
+```
+
+### Підключення Excel до ClickHouse
+
+Для аналізу даних у Excel підключіться через ODBC:
+
+1. Встановіть [ClickHouse ODBC Driver](https://github.com/ClickHouse/clickhouse-odbc)
+2. Налаштуйте DSN у Windows ODBC Data Sources (`SSLMode=require`, не `strict`)
+3. В Excel: **Дані → Отримати дані → З інших джерел → З ODBC**
+4. Виберіть DSN та використовуйте Power Query для агрегації даних
+
 ## Конфігурація
 
 ### Пріоритет налаштувань
@@ -229,7 +311,7 @@ python olap.py --profile weekly_sales --daemon
 
 | Файл | Призначення |
 |---|---|
-| `.env` | Секрети: сервер, БД, метод автентифікації, облікові дані |
+| `.env` | Секрети: OLAP сервер/БД, автентифікація, ClickHouse підключення |
 | `config.yaml` | Все інше: запити, експорт, форматування, шляхи, відображення |
 | `profiles/*.yaml` | Перевизначення будь-якої секції config.yaml для конкретного сценарію |
 
@@ -241,7 +323,7 @@ query:
   timeout: 30                            # Таймаут між запитами (сек)
 
 export:
-  format: xlsx          # xlsx, csv або both
+  format: xlsx          # xlsx, csv, both або ch (ClickHouse)
   compress: none        # zip або none
   force_csv_only: false # Ігнорувати xlsx навіть якщо вказано
 
@@ -274,6 +356,7 @@ display:
 ### .env — тільки секрети
 
 ```bash
+# OLAP підключення
 OLAP_SERVER=10.40.0.48
 OLAP_DATABASE=Sells
 OLAP_AUTH_METHOD=LOGIN
@@ -281,6 +364,16 @@ OLAP_DOMAIN=EPICENTRK
 OLAP_CREDENTIALS_ENCRYPTED=true
 OLAP_CREDENTIALS_FILE=.credentials
 OLAP_USE_MASTER_PASSWORD=false
+
+# ClickHouse підключення
+CH_ENABLED=true
+CH_HOST=your-clickhouse-host
+CH_PORT=8443
+CH_USERNAME=default
+CH_PASSWORD=your_password
+CH_SECURE=true
+CH_DATABASE=olap_export
+CH_TABLE=sales
 ```
 
 Повний приклад: [.env.example](.env.example)
@@ -306,6 +399,11 @@ OLAP_USE_MASTER_PASSWORD=false
 - Автоматичне стиснення після експорту
 - Збереження оригінальних файлів
 - Статистика коефіцієнту стиснення
+
+### ClickHouse
+- Прямий INSERT через clickhouse-connect з LZ4 стисненням
+- Ідемпотентна вставка (DELETE + INSERT за тижнем)
+- Автоматичне створення схеми та schema evolution
 
 ## Безпека
 
@@ -364,42 +462,44 @@ result/
 
 ```
 olap-export-tool/
-├── olap.py                    # Точка входу
-├── .env                       # Секрети (не в git)
-├── .env.example               # Приклад секретів
-├── config.yaml                # Основна конфігурація
-├── config.yaml.example        # Приклад конфігурації з описами
-├── requirements.txt           # Python залежності
+├── olap.py                        # Точка входу (OLAP експорт)
+├── import_xlsx_to_clickhouse.py   # Паралельний імпорт XLSX → ClickHouse
+├── .env                           # Секрети (не в git)
+├── .env.example                   # Приклад секретів
+├── config.yaml                    # Основна конфігурація
+├── config.yaml.example            # Приклад конфігурації з описами
+├── requirements.txt               # Python залежності
 │
-├── olap_tool/                 # Основний пакет
-│   ├── config.py              # Єдина точка конфігурації (AppConfig + build_config)
-│   ├── cli.py                 # Парсинг CLI аргументів
-│   ├── runner.py              # Основна логіка оркестрації
-│   ├── queries.py             # DAX запити та виконання
-│   ├── exporter.py            # Експорт у XLSX/CSV
-│   ├── connection.py          # OLAP підключення (ADOMD.NET / OleDb)
-│   ├── auth.py                # Управління обліковими даними
-│   ├── security.py            # Шифрування (Fernet)
-│   ├── prompt.py              # Інтерактивний ввід
-│   ├── periods.py             # Автоматичні періоди (7 типів)
-│   ├── profiles.py            # Завантаження YAML профілів
-│   ├── scheduler.py           # Планувальник задач
-│   ├── compression.py         # ZIP стиснення
-│   ├── progress.py            # Прогрес, таймери, анімації
-│   └── utils.py               # Утиліти виводу та форматування
+├── olap_tool/                     # Основний пакет
+│   ├── config.py                  # Єдина точка конфігурації (AppConfig + build_config)
+│   ├── cli.py                     # Парсинг CLI аргументів
+│   ├── runner.py                  # Основна логіка оркестрації
+│   ├── queries.py                 # DAX запити та виконання
+│   ├── exporter.py                # Експорт у XLSX/CSV
+│   ├── clickhouse_export.py       # Завантаження DataFrame у ClickHouse
+│   ├── connection.py              # OLAP підключення (ADOMD.NET / OleDb)
+│   ├── auth.py                    # Управління обліковими даними
+│   ├── security.py                # Шифрування (Fernet)
+│   ├── prompt.py                  # Інтерактивний ввід
+│   ├── periods.py                 # Автоматичні періоди (7 типів)
+│   ├── profiles.py                # Завантаження YAML профілів
+│   ├── scheduler.py               # Планувальник задач
+│   ├── compression.py             # ZIP стиснення
+│   ├── progress.py                # Прогрес, таймери, анімації
+│   └── utils.py                   # Утиліти виводу та форматування
 │
-├── profiles/                  # Профілі (YAML)
-│   └── weekly_sales.yaml      # Приклад: щотижневий звіт
+├── profiles/                      # Профілі (YAML)
+│   └── weekly_sales.yaml          # Приклад: щотижневий звіт
 │
-├── result/                    # Результати експорту
+├── result/                        # Результати експорту
 │   └── YYYY/
 │       ├── YYYY-WW.xlsx
 │       └── *.zip
 │
-├── logs/                      # Логи планувальника
+├── logs/                          # Логи планувальника
 │   └── scheduler_YYYY-MM-DD.log
 │
-└── lib/                       # ADOMD.NET бібліотеки
+└── lib/                           # ADOMD.NET бібліотеки
     └── Microsoft.AnalysisServices.AdomdClient.dll
 ```
 
@@ -429,6 +529,16 @@ pip install pythonnet>=3.0.0
 ```bash
 pip install PyYAML>=6.0.0
 ```
+
+**"ModuleNotFoundError: No module named 'clickhouse_connect'"**
+```bash
+pip install clickhouse-connect>=0.7.0
+```
+
+### ODBC підключення до ClickHouse
+
+**"bad value 'strict' for attribute 'SSLMode'"**
+- Відкрийте ODBC Data Sources → знайдіть DSN → змініть `SSLMode=strict` на `SSLMode=require`
 
 ### Режим налагодження
 
@@ -496,6 +606,16 @@ python olap.py --last-quarter \
   --compress zip
 ```
 
+### Імпорт архіву Excel у ClickHouse
+
+```bash
+# Повний архів (8 воркерів)
+python import_xlsx_to_clickhouse.py --workers 8
+
+# Тільки поточний рік
+python import_xlsx_to_clickhouse.py --year 2025 --workers 4
+```
+
 ## Додаткова документація
 
 - **[config.yaml.example](config.yaml.example)** — повний приклад конфігурації з описом всіх параметрів
@@ -504,10 +624,12 @@ python olap.py --last-quarter \
 
 ## Версія
 
+**v3.1** — ClickHouse інтеграція: новий модуль `clickhouse_export.py`, паралельний імпортер `import_xlsx_to_clickhouse.py` з rich UI, ідемпотентна вставка (year_num/week_num), python-calamine.
+
 **v3.0** — Єдина YAML-конфігурація, AppConfig dataclass, виправлення багів, видалення dead code.
 
 **v2.0** — CLI, автоматичні періоди, профілі, планувальник та стиснення файлів.
 
 ---
 
-**Дата оновлення:** 25 лютого 2026
+**Дата оновлення:** 6 березня 2026
