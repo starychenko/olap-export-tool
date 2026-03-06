@@ -53,8 +53,8 @@ def init_dotnet_and_providers(adomd_dll_path: str = ""):
                 "[INIT] Попередження: Шлях ADOMD_DLL_PATH не задано. Перевірте config.yaml або .env"
             )
 
-        clr.AddReference("Microsoft.AnalysisServices.AdomdClient")
-        clr.AddReference("System.Data")
+        clr.AddReference("Microsoft.AnalysisServices.AdomdClient")  # type: ignore[attr-defined]
+        clr.AddReference("System.Data")  # type: ignore[attr-defined]
 
         from Microsoft.AnalysisServices.AdomdClient import AdomdConnection  # type: ignore
         from pyadomd import Pyadomd  # type: ignore
@@ -268,6 +268,8 @@ def connect_to_olap(
     if connection_string is None:
         connection_string, auth_details = get_connection_string(secrets)
 
+    if auth_details is None:
+        auth_details = {}
     auth_method = auth_details.get("Метод автентифікації", "")
 
     try:

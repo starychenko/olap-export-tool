@@ -20,7 +20,7 @@ from .exporter import export_csv_stream, export_xlsx_dataframe, export_xlsx_stre
 from . import progress
 
 if TYPE_CHECKING:
-    from .config import QueryConfig, ExportConfig, XlsxConfig, CsvConfig, ExcelHeaderConfig, PathsConfig
+    from .config import QueryConfig, ExportConfig, XlsxConfig, CsvConfig, ExcelHeaderConfig, PathsConfig, ClickHouseConfig
 
 
 def generate_year_week_pairs(start_period, end_period, available_weeks):
@@ -73,6 +73,7 @@ def run_dax_query(
     csv_config: "CsvConfig",
     excel_header: "ExcelHeaderConfig",
     paths_config: "PathsConfig",
+    ch_config: "ClickHouseConfig | None" = None,
 ):
     try:
         year_num, week_num = map(int, reporting_period.split("-"))
@@ -180,9 +181,10 @@ def run_dax_query(
         export_format = export_config.format.upper()
         force_csv_only = export_config.force_csv_only
         streaming_xlsx = xlsx_config.streaming
+        ch_only = export_format in ("CH", "CLICKHOUSE")
 
-        # Стрімінговий XLSX
-        if export_format in ("XLSX", "BOTH") and not force_csv_only and streaming_xlsx:
+        # Стрімінговий XLSX (НЕ для режиму clickhouse)
+        if export_format in ("XLSX", "BOTH") and not force_csv_only and streaming_xlsx and not ch_only:
             progress.animation_running = False
             spinner_thread.join(timeout=1.0)
             xlsx_path = year_dir / f"{year_num}-{week_num:02d}.xlsx"
@@ -212,7 +214,7 @@ def run_dax_query(
                 )
             return str(xlsx_path)
 
-        if export_format == "CSV" or force_csv_only:
+        if (export_format == "CSV" or force_csv_only) and not ch_only:
             csv_path = year_dir / f"{year_num}-{week_num:02d}.csv"
             row_count = export_csv_stream(
                 cursor, csv_path,
@@ -293,13 +295,13 @@ def run_dax_query(
 
         df.rename(columns=renamed_columns, inplace=True)
 
-        if export_format not in ["XLSX", "CSV", "BOTH"]:
+        if export_format not in ["XLSX", "CSV", "BOTH", "CH", "CLICKHOUSE"]:
             print_warning(
                 f"Невідомий формат експорту: {export_format}. Використовуємо XLSX."
             )
             export_format = "XLSX"
-        export_xlsx_flag = export_format in ["XLSX", "BOTH"]
-        export_csv_flag = export_format in ["CSV", "BOTH"]
+        export_xlsx_flag = export_format in ["XLSX", "BOTH"] and not ch_only
+        export_csv_flag = export_format in ["CSV", "BOTH"] and not ch_only
         exported_files = []
         if export_xlsx_flag and not force_csv_only:
             xlsx_path = year_dir / f"{year_num}-{week_num:02d}.xlsx"
@@ -336,6 +338,15 @@ def run_dax_query(
             print_success(
                 f"Дані експортовано у файл: {Fore.WHITE}{filepath} {Fore.YELLOW}({file_size}, {len(df)} рядків)"
             )
+
+        # ClickHouse export (якщо enabled або формат CH/CLICKHOUSE)
+        if ch_config is not None and (ch_config.enabled or ch_only):
+            from .clickhouse_export import export_to_clickhouse
+            export_to_clickhouse(df, ch_config, year=year_num, week=week_num)
+
+        if ch_only:
+            # Не повертаємо файловий шлях — даних у файлі немає
+            return None
         return exported_files[0][0] if exported_files else None
     except Exception as e:
         from .utils import print_error

@@ -16,7 +16,7 @@ try:
     import schedule
     SCHEDULE_AVAILABLE = True
 except ImportError:
-    schedule = None
+    schedule = None  # type: ignore[assignment]
     SCHEDULE_AVAILABLE = False
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ def parse_simple_schedule(schedule_spec: str) -> Optional[Any]:
     Returns:
         schedule.Job: Об'єкт задачі або None при помилці
     """
-    if not SCHEDULE_AVAILABLE:
+    if not SCHEDULE_AVAILABLE or schedule is None:
         print_error("Бібліотека schedule не встановлена. Виконайте: pip install schedule>=1.2.0")
         return None
 
@@ -166,7 +166,7 @@ def start_scheduler(profile_name: str, schedule_spec: str) -> int:
     Returns:
         int: Код завершення (0 = успіх)
     """
-    if not SCHEDULE_AVAILABLE:
+    if not SCHEDULE_AVAILABLE or schedule is None:
         print_error("Бібліотека schedule не встановлена")
         print_info("Виконайте: pip install schedule>=1.2.0")
         return 1
@@ -220,7 +220,7 @@ def daemon_mode(profiles: List[str]) -> int:
     Returns:
         int: Код завершення (0 = успіх)
     """
-    if not SCHEDULE_AVAILABLE:
+    if not SCHEDULE_AVAILABLE or schedule is None:
         print_error("Бібліотека schedule не встановлена")
         print_info("Виконайте: pip install schedule>=1.2.0")
         return 1

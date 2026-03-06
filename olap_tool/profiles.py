@@ -6,13 +6,15 @@
 """
 
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Type
 
 try:
     import yaml
+    _YamlParseError: Type[BaseException] = yaml.YAMLError
     YAML_AVAILABLE = True
 except ImportError:
-    yaml = None
+    yaml = None  # type: ignore[assignment]
+    _YamlParseError = Exception
     YAML_AVAILABLE = False
 
 from .utils import print_info, print_warning, print_error
@@ -39,7 +41,7 @@ def load_profile(profile_name: str) -> Optional[Dict[str, Any]]:
     Returns:
         dict: Конфігурація профілю або None при помилці
     """
-    if not YAML_AVAILABLE:
+    if not YAML_AVAILABLE or yaml is None:
         print_error("PyYAML не встановлено. Виконайте: pip install PyYAML>=6.0.0")
         return None
 
@@ -86,7 +88,7 @@ def load_profile(profile_name: str) -> Optional[Dict[str, Any]]:
 
         return profile_data
 
-    except yaml.YAMLError as e:
+    except _YamlParseError as e:
         print_error(f"Помилка парсингу YAML файлу '{profile_name}': {e}")
         return None
     except Exception as e:

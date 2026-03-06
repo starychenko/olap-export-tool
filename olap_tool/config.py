@@ -6,15 +6,15 @@
 
 import os
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as dataclass_fields
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 try:
     import yaml
     YAML_AVAILABLE = True
 except ImportError:
-    yaml = None
+    yaml = None  # type: ignore[assignment]
     YAML_AVAILABLE = False
 
 
@@ -80,6 +80,19 @@ class PathsConfig:
 
 
 @dataclass
+class ClickHouseConfig:
+    """Налаштування підключення до ClickHouse (секрети з .env)."""
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 443
+    username: str = "default"
+    password: str = ""
+    secure: bool = True
+    database: str = "olap_export"
+    table: str = "sales"
+
+
+@dataclass
 class DisplayConfig:
     ascii_logs: bool = False
     debug: bool = False
@@ -96,6 +109,7 @@ class AppConfig:
     excel_header: ExcelHeaderConfig = field(default_factory=ExcelHeaderConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     display: DisplayConfig = field(default_factory=DisplayConfig)
+    clickhouse: ClickHouseConfig = field(default_factory=ClickHouseConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -131,13 +145,32 @@ def load_secrets_from_env() -> SecretsConfig:
     )
 
 
+def load_clickhouse_from_env() -> ClickHouseConfig:
+    """Читає налаштування ClickHouse з os.environ."""
+    ch_port_raw = os.getenv("CH_PORT", "443")
+    try:
+        ch_port = int(ch_port_raw)
+    except (ValueError, TypeError):
+        ch_port = 443
+    return ClickHouseConfig(
+        enabled=_parse_bool(os.getenv("CH_ENABLED", "false"), False),
+        host=os.getenv("CH_HOST", "localhost"),
+        port=ch_port,
+        username=os.getenv("CH_USERNAME", "default"),
+        password=os.getenv("CH_PASSWORD", ""),
+        secure=_parse_bool(os.getenv("CH_SECURE", "true"), True),
+        database=os.getenv("CH_DATABASE", "olap_export"),
+        table=os.getenv("CH_TABLE", "sales"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Step 2: load config.yaml
 # ---------------------------------------------------------------------------
 
 def load_config_yaml(path: str = "config.yaml") -> dict:
     """Читає config.yaml; повертає {} якщо файл відсутній або yaml недоступний."""
-    if not YAML_AVAILABLE:
+    if not YAML_AVAILABLE or yaml is None:
         return {}
     p = Path(path)
     if not p.exists():
@@ -205,7 +238,7 @@ def apply_legacy_env_compat(base: dict) -> dict:
 
 def apply_profile(base: dict, profile: dict) -> dict:
     """Deep-merge секцій профілю поверх base."""
-    for section in ("query", "export", "xlsx", "csv", "excel_header", "paths", "display"):
+    for section in ("query", "export", "xlsx", "csv", "excel_header", "paths", "display", "clickhouse"):
         if section in profile:
             base.setdefault(section, {})
             base[section].update(profile[section])
@@ -262,7 +295,7 @@ def _build_section(cls, data: dict, section_name: str):
     if not isinstance(section_data, dict):
         return cls()
     # Фільтруємо тільки поля, що є у dataclass
-    valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
+    valid_fields = {f.name for f in dataclass_fields(cls)}
     filtered = {k: v for k, v in section_data.items() if k in valid_fields and v is not None}
     return cls(**filtered)
 
@@ -289,6 +322,14 @@ def build_config(args=None, profile_config: Optional[dict] = None) -> AppConfig:
     # 5. Secrets (завжди з .env)
     secrets = load_secrets_from_env()
 
+    # ClickHouse: env задає defaults, profile може перевизначити.
+    # Завантажуємо env-значення в base["clickhouse"] як базу (якщо профіль не замінив).
+    ch_env = load_clickhouse_from_env()
+    ch_env_dict = {f.name: getattr(ch_env, f.name) for f in dataclass_fields(ch_env)}
+    base.setdefault("clickhouse", {})
+    for k, v in ch_env_dict.items():
+        base["clickhouse"].setdefault(k, v)
+
     # 6. Збираємо AppConfig
     return AppConfig(
         secrets=secrets,
@@ -299,4 +340,5 @@ def build_config(args=None, profile_config: Optional[dict] = None) -> AppConfig:
         excel_header=_build_section(ExcelHeaderConfig, base, "excel_header"),
         paths=_build_section(PathsConfig, base, "paths"),
         display=_build_section(DisplayConfig, base, "display"),
+        clickhouse=_build_section(ClickHouseConfig, base, "clickhouse"),
     )

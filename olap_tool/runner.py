@@ -231,6 +231,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"   {Fore.CYAN}Кількість періодів: {Fore.WHITE}{len(year_week_pairs)}")
         print(f"   {Fore.CYAN}Таймаут:        {Fore.WHITE}{query_timeout} секунд")
 
+        # ClickHouse налаштування
+        if config.clickhouse.enabled or config.export.format.upper() in ("CH", "CLICKHOUSE"):
+            print(
+                f"   {Fore.CYAN}ClickHouse:      {Fore.WHITE}{config.clickhouse.host}:{config.clickhouse.port}"
+            )
+            print(
+                f"   {Fore.CYAN}CH Database:     {Fore.WHITE}{config.clickhouse.database}.{config.clickhouse.table}"
+            )
+
         start_time = time.time()
         files_created: list[str] = []
         print_info(f"Запуск обробки для {len(year_week_pairs)} тижнів...")
@@ -251,9 +260,10 @@ def main(argv: list[str] | None = None) -> int:
                 connection, reporting_period,
                 config.query, config.export, config.xlsx,
                 config.csv, config.excel_header, config.paths,
+                ch_config=config.clickhouse,
             )
             if file_path:
-                files_created.append(file_path)
+                files_created.append(str(file_path))
             time_tracker.update()
 
         # Стиснення файлів якщо вказано compress=zip
