@@ -144,6 +144,10 @@ def process_file(
     if df.empty:
         return 0, True, time.monotonic() - t0
 
+    # Інжектуємо year_num/week_num із назви файлу — потрібно для ідемпотентного DELETE
+    df["year_num"] = year
+    df["week_num"] = week
+
     client = _get_thread_client(cfg)
     rows = export_to_clickhouse(
         df, cfg, year=year, week=week,
@@ -228,6 +232,8 @@ def main():
             ensure_database(init_client, cfg.database)
             df_init = _read_excel(files[0][0], sheet)
             if not df_init.empty:
+                df_init["year_num"] = files[0][1]
+                df_init["week_num"] = files[0][2]
                 ensure_table(init_client, cfg.database, cfg.table, sanitize_df(df_init))
             cached_schema = get_table_schema(init_client, cfg.database, cfg.table)
             init_client.close()
