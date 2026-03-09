@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .config import ClickHouseConfig
+    from .config import DuckDBConfig
 
 
 # ---------------------------------------------------------------------------
@@ -127,3 +128,165 @@ class ClickHouseSink(AnalyticsSink):
             except Exception:
                 pass
             self._client = None
+
+
+# ---------------------------------------------------------------------------
+# DuckDB sink (HTTP REST API)
+# ---------------------------------------------------------------------------
+
+def _pandas_dtype_to_duck(dtype) -> str:
+    """Конвертує pandas dtype у DuckDB SQL тип."""
+    dtype_str = str(dtype)
+    if dtype_str.startswith("int") or dtype_str.startswith("uint"):
+        return "BIGINT"
+    if dtype_str.startswith("float"):
+        return "DOUBLE"
+    if dtype_str in ("bool", "boolean"):
+        return "BOOLEAN"
+    if dtype_str.startswith("datetime"):
+        return "TIMESTAMP"
+    if dtype_str.startswith("date"):
+        return "DATE"
+    return "VARCHAR"
+
+
+def _duck_value(v) -> str:
+    """Серіалізує Python-значення у SQL-літерал для DuckDB VALUES."""
+    import math
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return "NULL"
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    if isinstance(v, (int, float)):
+        return str(v)
+    # str, datetime, тощо — екрануємо одинарні лапки
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+class DuckDBSink(AnalyticsSink):
+    """
+    Завантажує DataFrame у DuckDB через REST API.
+
+    API:
+      POST /execute  {"statements": [...]}   — DDL/DML
+      POST /query    {"sql": "..."}          — SELECT (для DESCRIBE)
+
+    Ідемпотентність: DELETE WHERE year_num=X AND week_num=Y → batch INSERT.
+    """
+
+    def __init__(self, config: "DuckDBConfig"):
+        self._config = config
+        self._session = self._make_session()
+        self._schema: dict[str, str] | None = None
+
+    def _make_session(self):
+        import requests
+        s = requests.Session()
+        s.headers.update({
+            "X-API-Key": self._config.api_key,
+            "Content-Type": "application/json",
+        })
+        return s
+
+    def _execute(self, statements: list[str]) -> dict:
+        resp = self._session.post(
+            f"{self._config.url}/execute",
+            json={"statements": statements},
+            timeout=600,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def _query(self, sql: str) -> dict:
+        resp = self._session.post(
+            f"{self._config.url}/query",
+            json={"sql": sql},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def setup(self, df: pd.DataFrame) -> None:
+        from .utils import print_progress, print_warning
+        print_progress(f"Перевірка таблиці DuckDB `{self._config.table}`...")
+        cols_ddl = ", ".join(
+            f'"{col}" {_pandas_dtype_to_duck(df[col].dtype)}'
+            for col in df.columns
+        )
+        self._execute([
+            f'CREATE TABLE IF NOT EXISTS "{self._config.table}" ({cols_ddl})'
+        ])
+        self._refresh_schema()
+        for col in df.columns:
+            if col not in self._schema:
+                dtype = _pandas_dtype_to_duck(df[col].dtype)
+                try:
+                    self._execute([
+                        f'ALTER TABLE "{self._config.table}" '
+                        f'ADD COLUMN IF NOT EXISTS "{col}" {dtype}'
+                    ])
+                    self._schema[col] = dtype
+                except Exception as e:
+                    print_warning(f"Не вдалося додати колонку `{col}`: {e} — пропускаємо")
+
+    def _refresh_schema(self) -> None:
+        result = self._query(f'DESCRIBE "{self._config.table}"')
+        col_idx = result["columns"].index("column_name")
+        type_idx = result["columns"].index("column_type")
+        self._schema = {row[col_idx]: row[type_idx] for row in result["rows"]}
+
+    def delete_period(self, year: int, week: int) -> None:
+        if self._schema is None:
+            self._refresh_schema()
+        conditions = []
+        if "year_num" in self._schema:
+            conditions.append(f"year_num = {year}")
+        if "week_num" in self._schema:
+            conditions.append(f"week_num = {week}")
+        if conditions:
+            where = " AND ".join(conditions)
+            self._execute([f'DELETE FROM "{self._config.table}" WHERE {where}'])
+
+    def insert(self, df: pd.DataFrame, year: int, week: int) -> int:
+        from .utils import print_progress, print_success, print_error
+        if df is None or len(df) == 0:
+            return 0
+
+        if self._schema:
+            cols = [c for c in df.columns if c in self._schema]
+            df = df[cols]
+
+        if df.empty:
+            return 0
+
+        col_list = ", ".join(f'"{c}"' for c in df.columns)
+        batch = self._config.batch_size
+        total = len(df)
+
+        print_progress(f"Завантаження {total} рядків у DuckDB...")
+
+        try:
+            for start in range(0, total, batch):
+                chunk = df.iloc[start:start + batch]
+                rows_sql = ", ".join(
+                    "(" + ", ".join(_duck_value(v) for v in row) + ")"
+                    for row in chunk.itertuples(index=False, name=None)
+                )
+                self._execute([
+                    f'INSERT INTO "{self._config.table}" ({col_list}) VALUES {rows_sql}'
+                ])
+
+            print_success(
+                f"Дані завантажено у DuckDB: `{self._config.table}` "
+                f"({total} рядків, тиждень {year}-{week:02d})"
+            )
+            return total
+        except Exception as e:
+            print_error(f"Помилка при завантаженні у DuckDB: {e}")
+            return 0
+
+    def close(self) -> None:
+        try:
+            self._session.close()
+        except Exception:
+            pass
