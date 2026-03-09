@@ -6,11 +6,12 @@ on:
 
 jobs:
   claude-review:
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
-      issues: write
+      issues: read
       id-token: write
 
     steps:
@@ -20,40 +21,68 @@ jobs:
           fetch-depth: 0
 
       - name: Run Claude Code Review
+        id: claude-review
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          custom_instructions: |
-            Цей проект — OLAP Export Tool (Python CLI). При рев'ю зверни особливу увагу на:
+          track_progress: true
+          prompt: |
+            You are reviewing PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.
+            This is a Python CLI tool for exporting data from OLAP cubes (Microsoft Analysis Services)
+            to Excel/CSV/ClickHouse/DuckDB. Python 3.8-3.13, pythonnet, pandas, xlsxwriter.
 
-            АРХІТЕКТУРНІ ІНВАРІАНТИ (критично):
-            - os.getenv() дозволено тільки у config.py (load_*_from_env) та security.py.
-              Всі модулі отримують конфіг через AppConfig dataclass.
-            - AnalyticsSink ABC (sinks.py): всі сховища реалізують setup/delete_period/insert/close.
-            - Ідемпотентність: DELETE WHERE year_num=X AND week_num=Y перед кожним INSERT.
-            - З'єднання завжди закриваються у finally блоках.
-            - sanitize_df — shared утиліта у sinks.py (не дублювати).
+            ## Setup
 
-            СТИЛЬ:
-            - User-facing повідомлення — українською мовою.
-            - Використовувати print_error/print_warning/print_success/print_progress з utils.py.
-            - Type hints у сигнатурах функцій.
-            - Відносні імпорти всередині пакету olap_tool.
+            Read CLAUDE.md first — it contains ALL project conventions, architecture rules, and patterns.
+            Focus your review on the PR diff, not the entire codebase.
+            Respond in Ukrainian language.
 
-            НА ЩО ЗВЕРТАТИ УВАГУ:
-            - Незакриті ресурси/з'єднання
-            - Англомовні user-facing повідомлення
-            - SQL injection через f-string без екранування
-            - Неправильний type mapping pandas → CH/DuckDB типів
-            - Batch INSERT без чанкування (може вичерпати пам'ять при великих DataFrame)
-            - Thread safety у паралельних скриптах
+            ## Severity Levels
 
-            ЩО НЕ Є ПРОБЛЕМОЮ:
-            - Відсутність unit-тестів (проект не має тестової інфраструктури)
-            - Довгі функції якщо логіка монолітна за природою
-            - Ukrainian comments у коді
+            Use these labels in every inline comment:
 
-            Відповідай українською мовою.
+            - **[BLOCKER]** — Must fix before merge. Broken architecture contract, data loss,
+              resource leaks, security issues, silent failures.
+            - **[IMPORTANT]** — Should fix. Convention violations, missing error handling,
+              performance issues, wrong type mapping.
+            - **[NIT]** — Optional. Style, naming, minor suggestions.
+
+            ## Blockers (auto request-changes)
+
+            If ANY of these are present, use "Request Changes":
+            - `os.getenv()` called outside `config.py` or `security.py` for app config
+            - `AnalyticsSink` subclass missing any of: `setup`, `delete_period`, `insert`, `close`
+            - No `DELETE WHERE year_num+week_num` before INSERT (idempotency broken)
+            - Connection/session not closed in `finally` block
+            - `sanitize_df` duplicated instead of imported from `sinks.py`
+            - SQL built with f-string interpolation of user-controlled data (injection risk)
+
+            ## Review Priorities (check in this order)
+
+            1. **Architecture** — Config flow via AppConfig, AnalyticsSink contract, idempotency
+            2. **Resource management** — Connections, HTTP sessions closed in finally
+            3. **Correctness** — Does the code do what the PR claims? Edge cases handled?
+            4. **Data integrity** — Type mapping pandas→CH/DuckDB correct? Batch size safe?
+            5. **Conventions** — Ukrainian user-facing messages, print_*/utils.py for output,
+               relative imports inside olap_tool, type hints in signatures
+            6. **Thread safety** — Parallel scripts use thread-safe data structures
+
+            ## Decision Criteria
+
+            - **Approve** — No blockers, no important issues, or only nits remaining.
+            - **Request Changes** — Any blocker, or 3+ important issues.
+            - **Comment** — Only if the PR is too large to review meaningfully; ask to split it.
+
+            ## Output Format
+
+            1. **Top-level summary comment:**
+               - What this PR changes (1-2 sentences from the diff)
+               - Verdict: Approve / Request Changes / Comment
+               - Blockers (if any)
+               - Important issues (if any)
+               - What's done well (1-2 points)
+
+            2. **Inline comments** on specific lines with severity label.
+
+            Be direct and critical. Don't praise generic things.
+            Focus on what matters in THIS diff.

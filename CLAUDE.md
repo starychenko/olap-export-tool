@@ -12,6 +12,8 @@ OLAP Export Tool is a Python CLI application for automated data export from OLAP
 - pandas, xlsxwriter for data processing and export
 - PyYAML for profile and config management
 - schedule for task scheduling
+- clickhouse-connect for ClickHouse integration
+- requests for DuckDB REST API integration (https://analytics.lwhs.xyz)
 
 ## Development Commands
 
@@ -85,7 +87,9 @@ AppConfig
 ├── csv: CsvConfig              # delimiter, encoding, quoting
 ├── excel_header: ExcelHeaderConfig  # color, font_color, font_size
 ├── paths: PathsConfig          # adomd_dll, result_dir
-└── display: DisplayConfig      # ascii_logs, debug, progress_interval_ms
+├── display: DisplayConfig      # ascii_logs, debug, progress_interval_ms
+├── clickhouse: ClickHouseConfig  # host, port, database, table, enabled
+└── duckdb: DuckDBConfig          # url, api_key, table, batch_size, enabled
 ```
 
 ### Entry Point and Flow
@@ -115,8 +119,12 @@ AppConfig
 - `security.py` - Fernet encryption for credential storage with machine binding
 - `prompt.py` - Interactive credential prompting with explicit domain parameter
 
+**Analytics Sinks:**
+- `sinks.py` - `AnalyticsSink` ABC + `ClickHouseSink` + `DuckDBSink` + shared `sanitize_df`
+- `clickhouse_export.py` - ClickHouse DDL/DML logic (sanitize_df imported from sinks.py)
+
 **Data Processing:**
-- `queries.py` - DAX query generation and execution (receives config sub-objects)
+- `queries.py` - DAX query generation and execution (receives `sinks: list[AnalyticsSink]`)
 - `exporter.py` - Data export to XLSX/CSV (receives `ExcelHeaderConfig`, `XlsxConfig`)
 
 **Period Calculation:**
@@ -264,6 +272,35 @@ Encrypted credentials are machine-specific and won't work if copied to another c
 
 **Profiles:** See `profiles/weekly_sales.yaml` — can override any config.yaml section.
 
+## Analytics Sinks Architecture
+
+`AnalyticsSink` (in `sinks.py`) is the ABC for all analytics storage backends:
+
+```python
+class AnalyticsSink(ABC):
+    def setup(self, df: pd.DataFrame) -> None: ...      # CREATE TABLE IF NOT EXISTS
+    def delete_period(self, year: int, week: int) -> None: ...  # idempotent DELETE
+    def insert(self, df: pd.DataFrame, year: int, week: int) -> int: ...
+    def close(self) -> None: ...
+```
+
+**Implementations:**
+- `ClickHouseSink` — adapter around `clickhouse_export.py`
+- `DuckDBSink` — HTTP REST via `requests.Session` to `https://analytics.lwhs.xyz`
+
+**Key invariants:**
+- `sanitize_df()` lives in `sinks.py` — do NOT duplicate in `clickhouse_export.py`
+- Every sink must `DELETE WHERE year_num=X AND week_num=Y` before INSERT (idempotency)
+- Connections/sessions always closed in `finally` or `close()`
+- `queries.py` receives `sinks: list[AnalyticsSink]` (not individual configs)
+- `runner.py` builds the sinks list from `AppConfig`
+
+**Formats:** `--format ch/clickhouse` or `--format duck/duckdb` for sink-only mode.
+
+**Batch scripts:**
+- `import_xlsx_to_clickhouse.py` — parallel XLSX→ClickHouse (thread-local clients)
+- `import_xlsx_to_duckdb.py` — parallel XLSX→DuckDB (shared `requests.Session`, thread-safe)
+
 ## Code Style Notes
 
 - The codebase uses Ukrainian language for user-facing messages and comments
@@ -272,3 +309,4 @@ Encrypted credentials are machine-specific and won't work if copied to another c
 - Module imports use relative imports within the `olap_tool` package
 - No module reads `os.getenv()` for app config — all config flows through `AppConfig`
 - OS identity variables (COMPUTERNAME, USERNAME, etc.) in `security.py` are acceptable
+- Use `print_error` / `print_warning` / `print_success` / `print_progress` from `utils.py` — never raw `print()` for user messages
