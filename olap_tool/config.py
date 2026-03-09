@@ -93,6 +93,16 @@ class ClickHouseConfig:
 
 
 @dataclass
+class DuckDBConfig:
+    """Налаштування підключення до DuckDB REST API."""
+    enabled: bool = False
+    url: str = "https://analytics.lwhs.xyz"
+    api_key: str = ""
+    table: str = "sales"
+    batch_size: int = 1000
+
+
+@dataclass
 class DisplayConfig:
     ascii_logs: bool = False
     debug: bool = False
@@ -110,6 +120,7 @@ class AppConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     display: DisplayConfig = field(default_factory=DisplayConfig)
     clickhouse: ClickHouseConfig = field(default_factory=ClickHouseConfig)
+    duckdb: DuckDBConfig = field(default_factory=DuckDBConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +153,21 @@ def load_secrets_from_env() -> SecretsConfig:
         credentials_file=os.getenv("OLAP_CREDENTIALS_FILE", ".credentials"),
         use_master_password=_parse_bool(os.getenv("OLAP_USE_MASTER_PASSWORD", "false"), False),
         master_password=os.getenv("OLAP_MASTER_PASSWORD"),
+    )
+
+
+def load_duckdb_from_env() -> DuckDBConfig:
+    """Читає налаштування DuckDB REST API з os.environ."""
+    try:
+        batch_size = int(os.getenv("DUCK_BATCH_SIZE", "1000"))
+    except (ValueError, TypeError):
+        batch_size = 1000
+    return DuckDBConfig(
+        enabled=_parse_bool(os.getenv("DUCK_ENABLED", "false"), False),
+        url=os.getenv("DUCK_URL", "https://analytics.lwhs.xyz"),
+        api_key=os.getenv("DUCK_API_KEY", ""),
+        table=os.getenv("DUCK_TABLE", "sales"),
+        batch_size=batch_size,
     )
 
 
@@ -238,7 +264,7 @@ def apply_legacy_env_compat(base: dict) -> dict:
 
 def apply_profile(base: dict, profile: dict) -> dict:
     """Deep-merge секцій профілю поверх base."""
-    for section in ("query", "export", "xlsx", "csv", "excel_header", "paths", "display", "clickhouse"):
+    for section in ("query", "export", "xlsx", "csv", "excel_header", "paths", "display", "clickhouse", "duckdb"):
         if section in profile:
             base.setdefault(section, {})
             base[section].update(profile[section])
@@ -330,6 +356,13 @@ def build_config(args=None, profile_config: Optional[dict] = None) -> AppConfig:
     for k, v in ch_env_dict.items():
         base["clickhouse"].setdefault(k, v)
 
+    # DuckDB: аналогічно ClickHouse — env задає defaults, profile може перевизначити
+    duck_env = load_duckdb_from_env()
+    duck_env_dict = {f.name: getattr(duck_env, f.name) for f in dataclass_fields(duck_env)}
+    base.setdefault("duckdb", {})
+    for k, v in duck_env_dict.items():
+        base["duckdb"].setdefault(k, v)
+
     # 6. Збираємо AppConfig
     return AppConfig(
         secrets=secrets,
@@ -341,4 +374,5 @@ def build_config(args=None, profile_config: Optional[dict] = None) -> AppConfig:
         paths=_build_section(PathsConfig, base, "paths"),
         display=_build_section(DisplayConfig, base, "display"),
         clickhouse=_build_section(ClickHouseConfig, base, "clickhouse"),
+        duckdb=_build_section(DuckDBConfig, base, "duckdb"),
     )
