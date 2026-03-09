@@ -10,6 +10,7 @@ import pandas as pd
 from .utils import (
     print_info,
     print_warning,
+    print_error,
     print_progress,
     print_success,
     format_time,
@@ -351,15 +352,12 @@ def run_dax_query(
                     sink.delete_period(year_num, week_num)
                     sink.insert(df_for_sinks, year=year_num, week=week_num)
                 except Exception as e:
-                    from .utils import print_error
                     print_error(f"Помилка sink {type(sink).__name__}: {e}")
 
         if ch_only:
             return None
         return exported_files[0][0] if exported_files else None
     except Exception as e:
-        from .utils import print_error
-
         print_error(f"Помилка при виконанні запиту: {e}")
         return None
     finally:
@@ -414,7 +412,5 @@ def get_available_weeks(connection):
         print_info(f"Отримано {len(available_weeks)} доступних тижнів з куба")
         return available_weeks
     except Exception as e:
-        from .utils import print_error
-
         print_error(f"Помилка при отриманні доступних тижнів: {e}")
         return []
