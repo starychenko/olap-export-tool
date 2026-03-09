@@ -120,7 +120,8 @@ def process_file(
     try:
         sink.delete_period(year, week)
         rows = sink.insert(df, year=year, week=week)
-        return rows, True, time.monotonic() - t0
+        success = rows > 0 or df.empty
+        return rows, success, time.monotonic() - t0
     except Exception:
         return 0, False, time.monotonic() - t0
 

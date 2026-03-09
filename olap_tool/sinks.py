@@ -153,13 +153,37 @@ def _pandas_dtype_to_duck(dtype) -> str:
 def _duck_value(v) -> str:
     """Серіалізує Python-значення у SQL-літерал для DuckDB VALUES."""
     import math
-    if v is None or (isinstance(v, float) and math.isnan(v)):
+    import pandas as pd
+
+    # None, NaT та float NaN → NULL
+    if v is None:
         return "NULL"
+    try:
+        if pd.isnull(v):
+            return "NULL"
+    except (TypeError, ValueError):
+        pass
+
+    # bool перед int (bool є підкласом int)
     if isinstance(v, bool):
         return "TRUE" if v else "FALSE"
+
+    # Числа (Python int/float та numpy scalar types)
+    try:
+        import numpy as np
+        if isinstance(v, (np.integer, np.floating)):
+            if isinstance(v, np.floating) and math.isnan(float(v)):
+                return "NULL"
+            return str(v.item())  # .item() конвертує у Python native type
+    except ImportError:
+        pass
+
     if isinstance(v, (int, float)):
+        if isinstance(v, float) and math.isnan(v):
+            return "NULL"
         return str(v)
-    # str, datetime, тощо — екрануємо одинарні лапки
+
+    # Рядки та datetime — екрануємо одинарні лапки
     return "'" + str(v).replace("'", "''") + "'"
 
 
@@ -175,9 +199,11 @@ class DuckDBSink(AnalyticsSink):
     """
 
     def __init__(self, config: "DuckDBConfig"):
+        import threading
         self._config = config
         self._session = self._make_session()
         self._schema: dict[str, str] | None = None
+        self._schema_lock = threading.Lock()
 
     def _make_session(self):
         import requests
@@ -233,15 +259,18 @@ class DuckDBSink(AnalyticsSink):
         result = self._query(f'DESCRIBE "{self._config.table}"')
         col_idx = result["columns"].index("column_name")
         type_idx = result["columns"].index("column_type")
-        self._schema = {row[col_idx]: row[type_idx] for row in result["rows"]}
+        with self._schema_lock:
+            self._schema = {row[col_idx]: row[type_idx] for row in result["rows"]}
 
     def delete_period(self, year: int, week: int) -> None:
         if self._schema is None:
             self._refresh_schema()
+        with self._schema_lock:
+            schema = dict(self._schema)
         conditions = []
-        if "year_num" in self._schema:
+        if "year_num" in schema:
             conditions.append(f"year_num = {year}")
-        if "week_num" in self._schema:
+        if "week_num" in schema:
             conditions.append(f"week_num = {week}")
         if conditions:
             where = " AND ".join(conditions)
@@ -252,8 +281,10 @@ class DuckDBSink(AnalyticsSink):
         if df is None or len(df) == 0:
             return 0
 
-        if self._schema:
-            cols = [c for c in df.columns if c in self._schema]
+        with self._schema_lock:
+            schema = dict(self._schema) if self._schema else {}
+        if schema:
+            cols = [c for c in df.columns if c in schema]
             df = df[cols]
 
         if df.empty:
