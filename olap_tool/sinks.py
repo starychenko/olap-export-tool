@@ -192,6 +192,28 @@ def _normalize_bigint_date_cols(df: pd.DataFrame, schema: dict[str, str]) -> pd.
     return df
 
 
+def _align_df_to_schema(df: pd.DataFrame, schema: dict[str, str]) -> pd.DataFrame:
+    """Приводить типи DataFrame до відповідності схеми DuckDB перед Parquet-upload.
+
+    - VARCHAR у схемі → конвертує числові колонки до рядка
+    - BIGINT у схемі + рядкові datetime → вже оброблено _normalize_bigint_date_cols
+    """
+    df = df.copy()
+    for col in df.columns:
+        duck_type = schema.get(col, "VARCHAR")
+        dtype_str = str(df[col].dtype)
+        if duck_type == "VARCHAR" and dtype_str not in ("object", "str", "string"):
+            # int64/float64 → str (напр. articul: 31262066 → '31262066')
+            def _to_str(v):
+                if pd.isnull(v):
+                    return None
+                if isinstance(v, float) and v == int(v):
+                    return str(int(v))
+                return str(v)
+            df[col] = df[col].apply(_to_str)
+    return df
+
+
 def _duck_value(v) -> str:
     """Серіалізує Python-значення у SQL-літерал для DuckDB VALUES."""
     import math
@@ -300,6 +322,24 @@ class DuckDBSink(AnalyticsSink):
                             self._schema[col] = dtype
                 except Exception as e:
                     print_warning(f"Не вдалося додати колонку `{col}`: {e} — пропускаємо")
+            else:
+                # Якщо схема BIGINT, але в DataFrame є нечислові рядки → змінюємо на VARCHAR
+                if schema.get(col) == "BIGINT":
+                    dtype_str = str(df[col].dtype)
+                    if dtype_str in ("object", "str", "string"):
+                        sample = df[col].dropna()
+                        if not sample.empty and isinstance(sample.iloc[0], str) and not _DT_RE.match(str(sample.iloc[0])):
+                            try:
+                                self._execute([
+                                    f'ALTER TABLE "{self._config.table}" '
+                                    f'ALTER COLUMN "{col}" TYPE VARCHAR'
+                                ])
+                                with self._schema_lock:
+                                    if self._schema is not None:
+                                        self._schema[col] = "VARCHAR"
+                                print_warning(f"Колонку `{col}` змінено BIGINT → VARCHAR (нечислові значення)")
+                            except Exception as e:
+                                print_warning(f"Не вдалося змінити тип `{col}`: {e}")
 
     def _refresh_schema(self) -> None:
         result = self._query(f'DESCRIBE "{self._config.table}"')
@@ -349,6 +389,7 @@ class DuckDBSink(AnalyticsSink):
             cols = [c for c in df.columns if c in schema]
             df = df[cols]
             df = _normalize_bigint_date_cols(df, schema)
+            df = _align_df_to_schema(df, schema)
 
         if df.empty:
             return 0
