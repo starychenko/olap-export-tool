@@ -155,9 +155,9 @@ def main():
     info.add_row("DuckDB URL",  cfg.url)
     info.add_row("Таблиця",     cfg.table)
     info.add_row("Excel engine", _EXCEL_ENGINE)
-    if args.year:
+    if args.year is not None:
         info.add_row("Рік", str(args.year))
-    if args.week:
+    if args.week is not None:
         info.add_row("Тиждень", str(args.week))
     if not args.dry_run:
         info.add_row("Воркери", str(args.workers))

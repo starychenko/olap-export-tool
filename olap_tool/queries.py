@@ -341,11 +341,15 @@ def run_dax_query(
 
         # Analytics sinks (ClickHouse, DuckDB, тощо)
         if sinks:
+            from .sinks import sanitize_df as _sanitize
+            df_for_sinks = _sanitize(df)
+            df_for_sinks["year_num"] = year_num
+            df_for_sinks["week_num"] = week_num
             for sink in sinks:
                 try:
-                    sink.setup(df)
+                    sink.setup(df_for_sinks)
                     sink.delete_period(year_num, week_num)
-                    sink.insert(df, year=year_num, week=week_num)
+                    sink.insert(df_for_sinks, year=year_num, week=week_num)
                 except Exception as e:
                     from .utils import print_error
                     print_error(f"Помилка sink {type(sink).__name__}: {e}")

@@ -271,19 +271,19 @@ class DuckDBSink(AnalyticsSink):
             self._refresh_schema()
         with self._schema_lock:
             schema: dict[str, str] = dict(self._schema) if self._schema is not None else {}
-        conditions = []
-        if "year_num" in schema:
-            conditions.append(f"year_num = {year}")
-        if "week_num" in schema:
-            conditions.append(f"week_num = {week}")
-        if conditions:
-            where = " AND ".join(conditions)
-            self._execute([f'DELETE FROM "{self._config.table}" WHERE {where}'])
+        # Видаляємо тільки якщо обидва ключі є в схемі — інакше ризик знищити весь рік
+        if "year_num" in schema and "week_num" in schema:
+            self._execute([
+                f'DELETE FROM "{self._config.table}" '
+                f'WHERE year_num = {year} AND week_num = {week}'
+            ])
 
     def insert(self, df: pd.DataFrame, year: int, week: int) -> int:
         from .utils import print_progress, print_success, print_error
         if df is None or len(df) == 0:
             return 0
+
+        df = sanitize_df(df)  # замінює inf/-inf → NaN перед серіалізацією
 
         with self._schema_lock:
             schema = dict(self._schema) if self._schema else {}
