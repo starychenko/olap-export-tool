@@ -7,6 +7,7 @@ Analytics Sink абстракція.
 """
 from __future__ import annotations
 
+import datetime
 import re
 from abc import ABC, abstractmethod
 
@@ -150,6 +151,47 @@ def _pandas_dtype_to_duck(dtype) -> str:
     return "VARCHAR"
 
 
+_EXCEL_EPOCH = datetime.date(1899, 12, 30)
+_DT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$")
+
+
+def _to_excel_serial(v) -> int | None:
+    """Конвертує datetime/date/datetime-рядок в Excel serial number (int)."""
+    if isinstance(v, datetime.datetime):
+        return (v.date() - _EXCEL_EPOCH).days
+    if isinstance(v, datetime.date):
+        return (v - _EXCEL_EPOCH).days
+    if isinstance(v, str) and _DT_RE.match(v):
+        try:
+            dt = datetime.datetime.strptime(v[:19], "%Y-%m-%d %H:%M:%S")
+            return (dt.date() - _EXCEL_EPOCH).days
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_bigint_date_cols(df: pd.DataFrame, schema: dict[str, str]) -> pd.DataFrame:
+    """Конвертує рядкові datetime-колонки у BIGINT-схемі до Excel serial number."""
+    for col in df.columns:
+        if schema.get(col) != "BIGINT":
+            continue
+        # Перевіряємо рядковий dtype (object або pd.StringDtype з calamine)
+        dtype_str = str(df[col].dtype)
+        if dtype_str not in ("object", "str", "string"):
+            continue
+        sample = df[col].dropna()
+        if sample.empty:
+            continue
+        first = sample.iloc[0]
+        if not isinstance(first, str) or not _DT_RE.match(first):
+            continue
+        df = df.copy()
+        df[col] = df[col].apply(
+            lambda v: _to_excel_serial(v) if pd.notna(v) else None
+        )
+    return df
+
+
 def _duck_value(v) -> str:
     """Серіалізує Python-значення у SQL-літерал для DuckDB VALUES."""
     import math
@@ -220,7 +262,8 @@ class DuckDBSink(AnalyticsSink):
             json={"statements": statements},
             timeout=600,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            raise Exception(f"HTTP {resp.status_code}: {resp.text[:500]}")
         return resp.json()
 
     def _query(self, sql: str) -> dict:
@@ -290,6 +333,7 @@ class DuckDBSink(AnalyticsSink):
         if schema:
             cols = [c for c in df.columns if c in schema]
             df = df[cols]
+            df = _normalize_bigint_date_cols(df, schema)
 
         if df.empty:
             return 0
