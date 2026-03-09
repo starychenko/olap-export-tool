@@ -20,4 +20,4 @@ clickhouse-connect>=0.7.0  # Для завантаження даних у Click
 requests>=2.28.0           # Для завантаження даних у DuckDB через REST API
 openpyxl>=3.0.0  # Для читання Excel-файлів (import_xlsx_to_clickhouse.py)
 python-calamine>=0.1.7  # Rust-based Excel reader, 3-10x швидший за openpyxl
-rich>=13.0.0  # Красивий термінальний UI: progress bar, панелі, таблиці
+rich>=13.0.0  # Красивий термінальний UI: progress bar, панелі, таблиціpyarrow>=14.0.0

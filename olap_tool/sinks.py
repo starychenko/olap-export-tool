@@ -252,7 +252,6 @@ class DuckDBSink(AnalyticsSink):
         s = requests.Session()
         s.headers.update({
             "X-API-Key": self._config.api_key,
-            "Content-Type": "application/json",
         })
         return s
 
@@ -321,6 +320,22 @@ class DuckDBSink(AnalyticsSink):
                 f'WHERE year_num = {year} AND week_num = {week}'
             ])
 
+    def _upload_parquet(self, df: pd.DataFrame) -> int:
+        """Завантажує DataFrame у DuckDB через /upload (Parquet, mode=append)."""
+        import io
+        buf = io.BytesIO()
+        df.to_parquet(buf, index=False)
+        buf.seek(0)
+        resp = self._session.post(
+            f"{self._config.url}/upload",
+            files={"file": ("data.parquet", buf, "application/octet-stream")},
+            data={"table": self._config.table, "mode": "append"},
+            timeout=120,
+        )
+        if not resp.ok:
+            raise Exception(f"HTTP {resp.status_code}: {resp.text[:500]}")
+        return resp.json().get("total_rows", 0)
+
     def insert(self, df: pd.DataFrame, year: int, week: int) -> int:
         from .utils import print_progress, print_success, print_error
         if df is None or len(df) == 0:
@@ -338,23 +353,11 @@ class DuckDBSink(AnalyticsSink):
         if df.empty:
             return 0
 
-        col_list = ", ".join(f'"{c}"' for c in df.columns)
-        batch = self._config.batch_size
         total = len(df)
-
         print_progress(f"Завантаження {total} рядків у DuckDB...")
 
         try:
-            for start in range(0, total, batch):
-                chunk = df.iloc[start:start + batch]
-                rows_sql = ", ".join(
-                    "(" + ", ".join(_duck_value(v) for v in row) + ")"
-                    for row in chunk.itertuples(index=False, name=None)
-                )
-                self._execute([
-                    f'INSERT INTO "{self._config.table}" ({col_list}) VALUES {rows_sql}'
-                ])
-
+            self._upload_parquet(df)
             print_success(
                 f"Дані завантажено у DuckDB: `{self._config.table}` "
                 f"({total} рядків, тиждень {year}-{week:02d})"
