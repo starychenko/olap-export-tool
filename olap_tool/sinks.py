@@ -360,24 +360,38 @@ class DuckDBSink(AnalyticsSink):
                 f'WHERE year_num = {year} AND week_num = {week}'
             ])
 
-    def _upload_parquet(self, df: pd.DataFrame) -> int:
+    def _upload_parquet(self, df: pd.DataFrame, _retries: int = 3) -> int:
         """Завантажує DataFrame у DuckDB через /upload (Parquet, mode=append)."""
         import io
+        import time as _time
         buf = io.BytesIO()
         df.to_parquet(buf, index=False)
-        buf.seek(0)
-        resp = self._session.post(
-            f"{self._config.url}/upload",
-            files={"file": ("data.parquet", buf, "application/octet-stream")},
-            data={"table": self._config.table, "mode": "append"},
-            timeout=120,
-        )
-        if not resp.ok:
-            raise Exception(f"HTTP {resp.status_code}: {resp.text[:500]}")
-        return resp.json().get("total_rows", 0)
+        parquet_bytes = buf.getvalue()
+
+        last_exc: Exception | None = None
+        for attempt in range(_retries):
+            try:
+                resp = self._session.post(
+                    f"{self._config.url}/upload",
+                    files={"file": ("data.parquet", parquet_bytes, "application/octet-stream")},
+                    data={"table": self._config.table, "mode": "append"},
+                    timeout=120,
+                )
+                if not resp.ok:
+                    err = Exception(f"HTTP {resp.status_code}: {resp.text[:500]}")
+                    # 4xx (крім 429 Too Many Requests) — одразу piднімаємо, без retry
+                    if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                        raise err
+                    last_exc = err
+                else:
+                    return resp.json().get("total_rows", 0)
+            except Exception as exc:
+                last_exc = exc
+            if attempt < _retries - 1:
+                _time.sleep(2 ** attempt)
+        raise last_exc  # type: ignore[misc]
 
     def insert(self, df: pd.DataFrame, year: int, week: int) -> int:
-        from .utils import print_progress, print_success, print_error
         if df is None or len(df) == 0:
             return 0
 
@@ -394,19 +408,8 @@ class DuckDBSink(AnalyticsSink):
         if df.empty:
             return 0
 
-        total = len(df)
-        print_progress(f"Завантаження {total} рядків у DuckDB...")
-
-        try:
-            self._upload_parquet(df)
-            print_success(
-                f"Дані завантажено у DuckDB: `{self._config.table}` "
-                f"({total} рядків, тиждень {year}-{week:02d})"
-            )
-            return total
-        except Exception as e:
-            print_error(f"Помилка при завантаженні у DuckDB: {e}")
-            return 0
+        self._upload_parquet(df)
+        return len(df)
 
     def close(self) -> None:
         try:
