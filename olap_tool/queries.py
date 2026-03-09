@@ -295,7 +295,7 @@ def run_dax_query(
 
         df.rename(columns=renamed_columns, inplace=True)
 
-        if export_format not in ["XLSX", "CSV", "BOTH", "CH", "CLICKHOUSE"]:
+        if export_format not in ["XLSX", "CSV", "BOTH", "CH", "CLICKHOUSE", "DUCK", "DUCKDB"]:
             print_warning(
                 f"Невідомий формат експорту: {export_format}. Використовуємо XLSX."
             )
