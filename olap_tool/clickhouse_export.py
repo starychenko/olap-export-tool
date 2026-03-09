@@ -11,13 +11,12 @@ ClickHouse Export Module
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Optional
 
-import numpy as np
 import pandas as pd
 
 from .utils import print_success, print_warning, print_error, print_progress
+from .sinks import sanitize_df, _safe_column_name  # shared utilities
 
 if TYPE_CHECKING:
     from .config import ClickHouseConfig
@@ -44,36 +43,6 @@ def _pandas_dtype_to_ch(dtype) -> str:
         return "Date"
     # object, string, category → String
     return "Nullable(String)"
-
-
-def _safe_column_name(name: str) -> str:
-    """Перетворює назву колонки у безпечний ідентифікатор ClickHouse."""
-    safe = re.sub(r"[^\w]", "_", name, flags=re.UNICODE)
-    safe = re.sub(r"_+", "_", safe).strip("_")
-    if not safe:
-        safe = "col"
-    if safe[0].isdigit():
-        safe = "c_" + safe
-    return safe
-
-
-# ---------------------------------------------------------------------------
-# Sanitizing data
-# ---------------------------------------------------------------------------
-
-def sanitize_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Оброблює inf/NaN та перетворює колонки на безпечні імена."""
-    df = df.copy()
-
-    # Перейменовуємо колонки — векторизована операція
-    df.rename(columns={col: _safe_column_name(col) for col in df.columns}, inplace=True)
-
-    # Заміняємо inf/-inf на NaN у числових колонках — векторизовано через numpy
-    float_cols = df.select_dtypes(include=["float64", "float32"]).columns
-    if len(float_cols) > 0:
-        df[float_cols] = df[float_cols].replace([np.inf, -np.inf], np.nan)
-
-    return df
 
 
 # ---------------------------------------------------------------------------

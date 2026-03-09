@@ -14,6 +14,7 @@
 - **Шифрування облікових даних** — безпечне зберігання паролів з прив'язкою до машини
 - **Потоковий експорт** — ефективна робота з великими наборами даних
 - **ClickHouse інтеграція** — завантаження експортованих даних у ClickHouse з паралельним імпортом
+- **DuckDB інтеграція** — завантаження даних у DuckDB через REST API з паралельним імпортом
 
 ## Вимоги
 
@@ -405,6 +406,60 @@ CH_TABLE=sales
 - Ідемпотентна вставка (DELETE + INSERT за тижнем)
 - Автоматичне створення схеми та schema evolution
 
+## DuckDB інтеграція (REST API)
+
+### Опис
+
+Інструмент підтримує завантаження експортованих даних у DuckDB через REST API. Модуль `olap_tool/sinks.py` містить `DuckDBSink` — реалізацію `AnalyticsSink`, яка відправляє дані через HTTP до DuckDB-сервісу. Скрипт `import_xlsx_to_duckdb.py` забезпечує паралельний пакетний імпорт існуючих XLSX-файлів.
+
+**Ключові особливості:**
+- Відправка даних через REST API (без локального DuckDB клієнта)
+- Ідемпотентна вставка — DELETE + INSERT за `year_num + week_num`
+- Автоматичне визначення типів колонок з pandas DataFrame
+- Thread-safe паралельний імпорт
+- Читання Excel через python-calamine (Rust, 3-10x швидше за openpyxl)
+
+### Налаштування
+
+Додайте в `.env` параметри DuckDB:
+
+```bash
+DUCK_ENABLED=true
+DUCK_URL=https://analytics.lwhs.xyz
+DUCK_API_KEY=<your-key>
+DUCK_TABLE=sales
+```
+
+### Пряме завантаження під час експорту
+
+Для завантаження у DuckDB разом з XLSX-експортом:
+
+```bash
+python olap.py --last-weeks 4 --format duck
+```
+
+Або в `config.yaml`:
+```yaml
+duckdb:
+  enabled: true
+```
+
+### Пакетний імпорт XLSX → DuckDB
+
+```bash
+# Імпорт всіх файлів з директорії result/ (4 паралельних воркери)
+python import_xlsx_to_duckdb.py --workers 4
+
+# Тільки 2025 рік
+python import_xlsx_to_duckdb.py --year 2025
+
+# 8 паралельних воркерів
+python import_xlsx_to_duckdb.py --year 2025 --workers 8
+
+# Показати файли без завантаження (dry run)
+python import_xlsx_to_duckdb.py --dry-run
+```
+
 ## Безпека
 
 ### Аутентифікація
@@ -464,6 +519,7 @@ result/
 olap-export-tool/
 ├── olap.py                        # Точка входу (OLAP експорт)
 ├── import_xlsx_to_clickhouse.py   # Паралельний імпорт XLSX → ClickHouse
+├── import_xlsx_to_duckdb.py       # Паралельний імпорт XLSX → DuckDB (REST API)
 ├── .env                           # Секрети (не в git)
 ├── .env.example                   # Приклад секретів
 ├── config.yaml                    # Основна конфігурація
@@ -476,7 +532,8 @@ olap-export-tool/
 │   ├── runner.py                  # Основна логіка оркестрації
 │   ├── queries.py                 # DAX запити та виконання
 │   ├── exporter.py                # Експорт у XLSX/CSV
-│   ├── clickhouse_export.py       # Завантаження DataFrame у ClickHouse
+│   ├── sinks.py                   # AnalyticsSink ABC, ClickHouseSink, DuckDBSink
+│   ├── clickhouse_export.py       # Завантаження DataFrame у ClickHouse (legacy)
 │   ├── connection.py              # OLAP підключення (ADOMD.NET / OleDb)
 │   ├── auth.py                    # Управління обліковими даними
 │   ├── security.py                # Шифрування (Fernet)
@@ -624,6 +681,8 @@ python import_xlsx_to_clickhouse.py --year 2025 --workers 4
 
 ## Версія
 
+**v3.2** — DuckDB інтеграція: `sinks.py` з `AnalyticsSink` ABC, `DuckDBSink` (REST API), `DuckDBConfig`, паралельний імпортер `import_xlsx_to_duckdb.py`.
+
 **v3.1** — ClickHouse інтеграція: новий модуль `clickhouse_export.py`, паралельний імпортер `import_xlsx_to_clickhouse.py` з rich UI, ідемпотентна вставка (year_num/week_num), python-calamine.
 
 **v3.0** — Єдина YAML-конфігурація, AppConfig dataclass, виправлення багів, видалення dead code.
@@ -632,4 +691,4 @@ python import_xlsx_to_clickhouse.py --year 2025 --workers 4
 
 ---
 
-**Дата оновлення:** 6 березня 2026
+**Дата оновлення:** 9 березня 2026

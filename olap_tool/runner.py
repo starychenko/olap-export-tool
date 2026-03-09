@@ -24,6 +24,7 @@ from . import periods
 from .compression import compress_files
 from .profiles import load_profile, print_profiles_list
 from .scheduler import start_scheduler, daemon_mode
+from .sinks import ClickHouseSink, DuckDBSink
 
 
 CURRENT_YEAR = datetime.datetime.now().year
@@ -231,14 +232,32 @@ def main(argv: list[str] | None = None) -> int:
             print(f"   {Fore.CYAN}Кількість періодів: {Fore.WHITE}{len(year_week_pairs)}")
         print(f"   {Fore.CYAN}Таймаут:        {Fore.WHITE}{query_timeout} секунд")
 
+        export_format = config.export.format.upper()
+
         # ClickHouse налаштування
-        if config.clickhouse.enabled or config.export.format.upper() in ("CH", "CLICKHOUSE"):
+        if config.clickhouse.enabled or export_format in ("CH", "CLICKHOUSE"):
             print(
                 f"   {Fore.CYAN}ClickHouse:      {Fore.WHITE}{config.clickhouse.host}:{config.clickhouse.port}"
             )
             print(
                 f"   {Fore.CYAN}CH Database:     {Fore.WHITE}{config.clickhouse.database}.{config.clickhouse.table}"
             )
+
+        # DuckDB налаштування
+        if config.duckdb.enabled or export_format in ("DUCK", "DUCKDB"):
+            print(
+                f"   {Fore.CYAN}DuckDB:          {Fore.WHITE}{config.duckdb.url}"
+            )
+            print(
+                f"   {Fore.CYAN}DuckDB Table:    {Fore.WHITE}{config.duckdb.table}"
+            )
+
+        # Побудова списку активних analytics sinks
+        sinks = []
+        if config.clickhouse.enabled or export_format in ("CH", "CLICKHOUSE"):
+            sinks.append(ClickHouseSink(config.clickhouse))
+        if config.duckdb.enabled or export_format in ("DUCK", "DUCKDB"):
+            sinks.append(DuckDBSink(config.duckdb))
 
         start_time = time.time()
         files_created: list[str] = []
@@ -260,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
                 connection, reporting_period,
                 config.query, config.export, config.xlsx,
                 config.csv, config.excel_header, config.paths,
-                ch_config=config.clickhouse,
+                sinks=sinks,
             )
             if file_path:
                 files_created.append(str(file_path))
@@ -324,6 +343,11 @@ def main(argv: list[str] | None = None) -> int:
             print_warning("Не було створено жодного файлу")
 
     finally:
+        for sink in (sinks if 'sinks' in locals() else []):
+            try:
+                sink.close()
+            except Exception:
+                pass
         # Bug fix: з'єднання завжди закривається
         if connection:
             try:
