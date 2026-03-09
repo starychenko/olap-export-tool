@@ -73,7 +73,7 @@ def run_dax_query(
     csv_config: "CsvConfig",
     excel_header: "ExcelHeaderConfig",
     paths_config: "PathsConfig",
-    ch_config: "ClickHouseConfig | None" = None,
+    sinks: "list | None" = None,
 ):
     try:
         year_num, week_num = map(int, reporting_period.split("-"))
@@ -181,7 +181,7 @@ def run_dax_query(
         export_format = export_config.format.upper()
         force_csv_only = export_config.force_csv_only
         streaming_xlsx = xlsx_config.streaming
-        ch_only = export_format in ("CH", "CLICKHOUSE")
+        ch_only = export_format in ("CH", "CLICKHOUSE", "DUCK", "DUCKDB")
 
         # Стрімінговий XLSX (НЕ для режиму clickhouse)
         if export_format in ("XLSX", "BOTH") and not force_csv_only and streaming_xlsx and not ch_only:
@@ -339,13 +339,18 @@ def run_dax_query(
                 f"Дані експортовано у файл: {Fore.WHITE}{filepath} {Fore.YELLOW}({file_size}, {len(df)} рядків)"
             )
 
-        # ClickHouse export (якщо enabled або формат CH/CLICKHOUSE)
-        if ch_config is not None and (ch_config.enabled or ch_only):
-            from .clickhouse_export import export_to_clickhouse
-            export_to_clickhouse(df, ch_config, year=year_num, week=week_num)
+        # Analytics sinks (ClickHouse, DuckDB, тощо)
+        if sinks:
+            for sink in sinks:
+                try:
+                    sink.setup(df)
+                    sink.delete_period(year_num, week_num)
+                    sink.insert(df, year=year_num, week=week_num)
+                except Exception as e:
+                    from .utils import print_error
+                    print_error(f"Помилка sink {type(sink).__name__}: {e}")
 
         if ch_only:
-            # Не повертаємо файловий шлях — даних у файлі немає
             return None
         return exported_files[0][0] if exported_files else None
     except Exception as e:
