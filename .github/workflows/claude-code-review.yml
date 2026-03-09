@@ -3,42 +3,71 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
-      issues: read
+      pull-requests: write
+      issues: write
       id-token: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Run Claude Code Review
-        id: claude-review
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
+          system_prompt: |
+            Ти виконуєш code review для Python CLI проекту OLAP Export Tool.
 
+            ## Проект
+            Інструмент для автоматизованого експорту даних з OLAP-кубів (Microsoft Analysis Services)
+            у Excel/CSV/ClickHouse/DuckDB. Ключові технології: Python 3.8-3.13, pythonnet (ADOMD.NET),
+            pandas, xlsxwriter, clickhouse-connect, requests (DuckDB REST API).
+
+            ## Архітектурні інваріанти (КРИТИЧНО перевіряти)
+
+            1. **Config flow**: Жоден модуль не читає os.getenv() для бізнес-конфігурації.
+               Виняток: тільки security.py (OS identity), config.py (load_*_from_env).
+               Всі налаштування передаються через AppConfig dataclass.
+
+            2. **AnalyticsSink абстракція**: ClickHouseSink і DuckDBSink реалізують AnalyticsSink ABC.
+               Нові сховища мають реалізовувати setup/delete_period/insert/close.
+
+            3. **Ідемпотентність**: Кожен sink перед INSERT виконує DELETE WHERE year_num=X AND week_num=Y.
+
+            4. **Підключення**: з'єднання завжди закриваються у finally блоках.
+
+            5. **sanitize_df**: Shared утиліта у sinks.py. clickhouse_export.py імпортує звідти.
+
+            ## Стиль коду
+            - Усі user-facing повідомлення — **українською мовою**
+            - print_error/print_warning/print_success/print_progress з utils.py (не print())
+            - Type hints у сигнатурах функцій
+            - Відносні імпорти всередині пакету olap_tool
+
+            ## На що звертати увагу
+            - Незакриті з'єднання або ресурси
+            - os.getenv() поза config.py/security.py
+            - Англомовні user-facing повідомлення (мають бути українські)
+            - Порушення AnalyticsSink контракту
+            - SQL injection через f-string без екранування
+            - Неправильний type mapping pandas → CH/DuckDB типи
+            - Batch INSERT без чанкування (може вичерпати пам'ять)
+            - Thread safety у паралельних скриптах
+
+            ## Що НЕ є проблемою
+            - Відсутність unit-тестів (проект не має тестової інфраструктури)
+            - Довгі функції якщо логіка монолітна за природою (run_dax_query)
+            - Ukrainian comments у коді
+
+            Відповідай українською мовою.

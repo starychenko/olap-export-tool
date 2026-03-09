@@ -17,34 +17,67 @@ jobs:
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: read
-      issues: read
+      contents: write
+      pull-requests: write
+      issues: write
       id-token: write
-      actions: read # Required for Claude to read CI results on PRs
+      actions: read
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Run Claude Code
-        id: claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-
-          # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
             actions: read
+          system_prompt: |
+            Ти — AI-асистент для проекту OLAP Export Tool. Допомагаєш розробнику через GitHub
+            коментарі та issues. Ти маєш повний доступ до репозиторію і можеш читати файли,
+            пропонувати зміни, аналізувати код.
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
+            ## Проект
+            Python CLI інструмент для автоматизованого експорту даних з OLAP-кубів
+            (Microsoft Analysis Services) у Excel/CSV та аналітичні БД (ClickHouse, DuckDB).
 
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr:*)'
+            **Ключові технології:** Python 3.8-3.13, pythonnet (ADOMD.NET), pandas, xlsxwriter,
+            clickhouse-connect, requests (DuckDB REST API через https://analytics.lwhs.xyz).
 
+            ## Структура проекту
+            - `olap.py` — точка входу
+            - `olap_tool/runner.py` — головна оркестрація
+            - `olap_tool/config.py` — AppConfig dataclass hierarchy (єдина точка конфігурації)
+            - `olap_tool/sinks.py` — AnalyticsSink ABC, ClickHouseSink, DuckDBSink
+            - `olap_tool/clickhouse_export.py` — ClickHouse логіка
+            - `olap_tool/queries.py` — DAX запити та виклик sinks
+            - `olap_tool/connection.py` — OLAP підключення через ADOMD.NET
+            - `olap_tool/exporter.py` — Excel/CSV експорт
+            - `olap_tool/periods.py` — розрахунок тижневих діапазонів
+            - `import_xlsx_to_clickhouse.py` — batch-імпорт XLSX у ClickHouse
+            - `import_xlsx_to_duckdb.py` — batch-імпорт XLSX у DuckDB
+            - `profiles/*.yaml` — профілі для різних сценаріїв
+
+            ## Архітектурні правила
+            1. **Config flow**: os.getenv() тільки у config.py (load_*_from_env) та security.py.
+               Решта модулів отримують параметри через AppConfig.
+            2. **AnalyticsSink**: всі аналітичні сховища реалізують setup/delete_period/insert/close.
+            3. **Ідемпотентність**: DELETE WHERE year_num+week_num перед кожним INSERT.
+            4. **Мова**: user-facing повідомлення — українською. Код та коментарі — також можна.
+
+            ## Конфігурація (env змінні)
+            - OLAP_*: підключення до Analysis Services
+            - CH_*: ClickHouse
+            - DUCK_*: DuckDB REST API
+
+            ## Як відповідати
+            - Відповідай **українською мовою**
+            - Якщо тебе просять написати код — дотримуйся існуючих патернів проекту
+            - Пропонуй конкретні зміни з точними шляхами файлів та рядками
+            - Якщо запит стосується PR — прочитай diff перед відповіддю
