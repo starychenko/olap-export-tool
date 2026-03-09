@@ -243,15 +243,19 @@ class DuckDBSink(AnalyticsSink):
             f'CREATE TABLE IF NOT EXISTS "{self._config.table}" ({cols_ddl})'
         ])
         self._refresh_schema()
+        with self._schema_lock:
+            schema = dict(self._schema)  # type: ignore[arg-type]
         for col in df.columns:
-            if col not in self._schema:
+            if col not in schema:
                 dtype = _pandas_dtype_to_duck(df[col].dtype)
                 try:
                     self._execute([
                         f'ALTER TABLE "{self._config.table}" '
                         f'ADD COLUMN IF NOT EXISTS "{col}" {dtype}'
                     ])
-                    self._schema[col] = dtype
+                    with self._schema_lock:
+                        if self._schema is not None:
+                            self._schema[col] = dtype
                 except Exception as e:
                     print_warning(f"Не вдалося додати колонку `{col}`: {e} — пропускаємо")
 
@@ -266,7 +270,7 @@ class DuckDBSink(AnalyticsSink):
         if self._schema is None:
             self._refresh_schema()
         with self._schema_lock:
-            schema = dict(self._schema)
+            schema: dict[str, str] = dict(self._schema) if self._schema is not None else {}
         conditions = []
         if "year_num" in schema:
             conditions.append(f"year_num = {year}")
