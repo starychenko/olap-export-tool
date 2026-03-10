@@ -145,7 +145,11 @@ class TUIStream:
                 self._app.call_from_thread(self._log.write, clean)
 
     def flush(self) -> None:
-        pass
+        if self._buf:
+            clean = _ANSI_ESCAPE.sub("", self._buf)
+            self._buf = ""
+            if clean:
+                self._app.call_from_thread(self._log.write, clean)
 
     def fileno(self):
         raise _io.UnsupportedOperation("no fileno")

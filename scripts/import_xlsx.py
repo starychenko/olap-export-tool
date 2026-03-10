@@ -10,7 +10,7 @@
 Підтримувані цілі (--target):
   ch / clickhouse   — ClickHouse (thread-local з'єднання на кожен воркер)
   duck / duckdb     — DuckDB REST API (один спільний sink, thread-safe)
-  pg / postgresql   — PostgreSQL через COPY FROM STDIN (один sink на потік)
+  pg / postgresql   — PostgreSQL через COPY FROM STDIN (thread-local з'єднання на кожен воркер)
 """
 
 import sys
@@ -89,6 +89,28 @@ def _get_ch_sink(cfg_kwargs: dict):
 
 
 # ---------------------------------------------------------------------------
+# Thread-local сховище для PostgreSQL (одне з'єднання на потік)
+# PostgreSQLSink НЕ є thread-safe — psycopg2 з'єднання не можна шерити між потоками
+# ---------------------------------------------------------------------------
+_pg_local = threading.local()
+_pg_all_sinks: list = []
+_pg_sinks_lock = threading.Lock()
+
+
+def _get_pg_sink(cfg_kwargs: dict):
+    """Повертає thread-local PostgreSQLSink; створює якщо ще немає."""
+    if not hasattr(_pg_local, "sink") or _pg_local.sink is None:
+        from olap_tool.sinks import PostgreSQLSink
+        from olap_tool.core.config import PostgreSQLConfig
+        sink = PostgreSQLSink(PostgreSQLConfig(**cfg_kwargs))
+        # setup вже викликаний у main() з першим df — тут не викликаємо
+        _pg_local.sink = sink
+        with _pg_sinks_lock:
+            _pg_all_sinks.append(sink)
+    return _pg_local.sink
+
+
+# ---------------------------------------------------------------------------
 # Файловий пошук
 # ---------------------------------------------------------------------------
 
@@ -161,6 +183,41 @@ def _process_ch(
         return 0, False, time.monotonic() - t0
 
 
+def _process_pg(
+    file_path: Path,
+    year: int,
+    week: int,
+    cfg_kwargs: dict,
+    sheet,
+) -> tuple[int, bool, float]:
+    """
+    Воркер для PostgreSQL.
+    Кожен потік отримує власний sink через thread-local storage,
+    оскільки PostgreSQLSink НЕ є thread-safe.
+    """
+    t0 = time.monotonic()
+    try:
+        df = _read_excel(file_path, sheet)
+    except Exception:
+        return 0, False, time.monotonic() - t0
+
+    if df.empty:
+        return 0, True, time.monotonic() - t0
+
+    from olap_tool.sinks import sanitize_df
+    df = sanitize_df(df)
+    df["year_num"] = year
+    df["week_num"] = week
+
+    sink = _get_pg_sink(cfg_kwargs)
+    try:
+        sink.delete_period(year, week)
+        rows = sink.insert(df, year=year, week=week)
+        return rows, rows >= 0, time.monotonic() - t0
+    except Exception:
+        return 0, False, time.monotonic() - t0
+
+
 def _process_shared(
     file_path: Path,
     year: int,
@@ -169,9 +226,8 @@ def _process_shared(
     sheet,
 ) -> tuple[int, bool, float]:
     """
-    Воркер для DuckDB та PostgreSQL.
-    Використовує один спільний sink (їх внутрішня реалізація thread-safe або
-    захищена блокуваннями).
+    Воркер для DuckDB.
+    Використовує один спільний sink (внутрішня реалізація thread-safe).
     """
     t0 = time.monotonic()
     try:
@@ -340,12 +396,21 @@ def main() -> int:
 
             else:  # postgresql
                 from olap_tool.sinks import PostgreSQLSink, sanitize_df
-                sink = PostgreSQLSink(cfg)
+                from dataclasses import fields as dc_fields
+
+                # Зберігаємо cfg як dict для передачі у thread-local фабрику
+                _pg_cfg_kwargs = {
+                    f.name: getattr(cfg, f.name) for f in dc_fields(cfg)
+                }
+                # Ініціалізаційний sink (не thread-local — тільки для setup)
+                init_sink = PostgreSQLSink(cfg)
                 if not df_init.empty:
                     df_init_clean = sanitize_df(df_init.copy())
                     df_init_clean["year_num"] = files[0][1]
                     df_init_clean["week_num"] = files[0][2]
-                    sink.setup(df_init_clean)
+                    init_sink.setup(df_init_clean)
+                init_sink.close()
+                sink = None  # воркери використовують thread-local sinks
 
         except Exception as e:
             console.print(f"[red]❌ Помилка ініціалізації: {e}[/red]")
@@ -379,6 +444,13 @@ def main() -> int:
                 futures = {
                     executor.submit(
                         _process_ch, fp, y, w, _ch_cfg_kwargs, sheet
+                    ): (fp, y, w)
+                    for fp, y, w in files
+                }
+            elif target == "postgresql":
+                futures = {
+                    executor.submit(
+                        _process_pg, fp, y, w, _pg_cfg_kwargs, sheet
                     ): (fp, y, w)
                     for fp, y, w in files
                 }
@@ -429,6 +501,13 @@ def main() -> int:
     if target == "clickhouse":
         # Закриваємо всі thread-local sinks
         for s in _ch_all_sinks:
+            try:
+                s.close()
+            except Exception:
+                pass
+    elif target == "postgresql":
+        # Закриваємо всі thread-local sinks
+        for s in _pg_all_sinks:
             try:
                 s.close()
             except Exception:

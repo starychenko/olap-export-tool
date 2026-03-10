@@ -13,7 +13,10 @@ from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Selec
 
 def _list_profiles() -> list[tuple[str, str]]:
     """Повертає список доступних профілів як (value, label)."""
-    profiles_dir = Path("profiles")
+    # Корінь проєкту = чотири рівні вгору від цього файлу
+    # olap_tool/tui/screens/olap_export.py → olap_tool/tui/screens → olap_tool/tui → olap_tool → project root
+    project_root = Path(__file__).parent.parent.parent.parent
+    profiles_dir = project_root / "profiles"
     if not profiles_dir.exists():
         return []
     return [(p.stem, p.stem) for p in sorted(profiles_dir.glob("*.yaml"))]
