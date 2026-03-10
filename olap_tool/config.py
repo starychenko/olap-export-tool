@@ -113,7 +113,7 @@ class PostgreSQLConfig:
     password: str = ""
     schema: str = "public"
     table: str = "sales"
-    ssl_mode: str = "require"
+    ssl_mode: str = "require"  # disable|allow|prefer|require|verify-ca|verify-full
 
 
 @dataclass
@@ -186,25 +186,6 @@ def load_duckdb_from_env() -> DuckDBConfig:
     )
 
 
-def load_postgres_from_env() -> PostgreSQLConfig:
-    """Читає налаштування PostgreSQL з os.environ."""
-    try:
-        pg_port = int(os.getenv("PG_PORT", "5432"))
-    except (ValueError, TypeError):
-        pg_port = 5432
-    return PostgreSQLConfig(
-        enabled=_parse_bool(os.getenv("PG_ENABLED", "false"), False),
-        host=os.getenv("PG_HOST", "localhost"),
-        port=pg_port,
-        database=os.getenv("PG_DATABASE", "analytics"),
-        user=os.getenv("PG_USER", "analytics"),
-        password=os.getenv("PG_PASSWORD", ""),
-        schema=os.getenv("PG_SCHEMA", "public"),
-        table=os.getenv("PG_TABLE", "sales"),
-        ssl_mode=os.getenv("PG_SSL_MODE", "require"),
-    )
-
-
 def load_clickhouse_from_env() -> ClickHouseConfig:
     """Читає налаштування ClickHouse з os.environ."""
     ch_port_raw = os.getenv("CH_PORT", "443")
@@ -221,6 +202,25 @@ def load_clickhouse_from_env() -> ClickHouseConfig:
         secure=_parse_bool(os.getenv("CH_SECURE", "true"), True),
         database=os.getenv("CH_DATABASE", "olap_export"),
         table=os.getenv("CH_TABLE", "sales"),
+    )
+
+
+def load_postgres_from_env() -> PostgreSQLConfig:
+    """Читає налаштування PostgreSQL з os.environ."""
+    try:
+        pg_port = int(os.getenv("PG_PORT", "5432"))
+    except (ValueError, TypeError):
+        pg_port = 5432
+    return PostgreSQLConfig(
+        enabled=_parse_bool(os.getenv("PG_ENABLED", "false"), False),
+        host=os.getenv("PG_HOST", "localhost"),
+        port=pg_port,
+        database=os.getenv("PG_DATABASE", "analytics"),
+        user=os.getenv("PG_USER", "analytics"),
+        password=os.getenv("PG_PASSWORD", ""),
+        schema=os.getenv("PG_SCHEMA", "public"),
+        table=os.getenv("PG_TABLE", "sales"),
+        ssl_mode=os.getenv("PG_SSL_MODE", "require"),
     )
 
 
