@@ -104,8 +104,10 @@ class XlsxImportScreen(Screen):
         try:
             script_path = Path(__file__).parent.parent.parent.parent / "scripts" / "import_xlsx.py"
             spec = importlib.util.spec_from_file_location("import_xlsx", script_path)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Не вдалося завантажити: {script_path}")
             mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
+            spec.loader.exec_module(mod)  # type: ignore[union-attr]
             mod.main()
             self.app.call_from_thread(log.write, "[bold green]✓ Імпорт завершено[/bold green]")
         except SystemExit:

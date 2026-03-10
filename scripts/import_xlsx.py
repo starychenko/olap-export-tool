@@ -387,6 +387,8 @@ def main() -> int:
 
             elif target == "duckdb":
                 from olap_tool.sinks import DuckDBSink, sanitize_df
+                from olap_tool.core.config import DuckDBConfig
+                assert isinstance(cfg, DuckDBConfig)
                 sink = DuckDBSink(cfg)
                 if not df_init.empty:
                     df_init_clean = sanitize_df(df_init.copy())
@@ -396,8 +398,10 @@ def main() -> int:
 
             else:  # postgresql
                 from olap_tool.sinks import PostgreSQLSink, sanitize_df
+                from olap_tool.core.config import PostgreSQLConfig
                 from dataclasses import fields as dc_fields
 
+                assert isinstance(cfg, PostgreSQLConfig)
                 # Зберігаємо cfg як dict для передачі у thread-local фабрику
                 _pg_cfg_kwargs = {
                     f.name: getattr(cfg, f.name) for f in dc_fields(cfg)
@@ -513,10 +517,11 @@ def main() -> int:
             except Exception:
                 pass
     else:
-        try:
-            sink.close()
-        except Exception:
-            pass
+        if sink is not None:
+            try:
+                sink.close()
+            except Exception:
+                pass
 
     # ── Підсумок ───────────────────────────────────────────────────────────
     elapsed_total = time.monotonic() - start_time
