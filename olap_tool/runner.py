@@ -24,7 +24,7 @@ from . import periods
 from .compression import compress_files
 from .profiles import load_profile, print_profiles_list
 from .scheduler import start_scheduler, daemon_mode
-from .sinks import ClickHouseSink, DuckDBSink
+from .sinks import ClickHouseSink, DuckDBSink, PostgreSQLSink
 
 
 CURRENT_YEAR = datetime.datetime.now().year
@@ -252,12 +252,23 @@ def main(argv: list[str] | None = None) -> int:
                 f"   {Fore.CYAN}DuckDB Table:    {Fore.WHITE}{config.duckdb.table}"
             )
 
+        # PostgreSQL налаштування
+        if config.postgresql.enabled or export_format in ("PG", "POSTGRESQL"):
+            print(
+                f"   {Fore.CYAN}PostgreSQL:      {Fore.WHITE}{config.postgresql.host}:{config.postgresql.port}"
+            )
+            print(
+                f"   {Fore.CYAN}PG Table:        {Fore.WHITE}{config.postgresql.schema}.{config.postgresql.table}"
+            )
+
         # Побудова списку активних analytics sinks
         sinks = []
         if config.clickhouse.enabled or export_format in ("CH", "CLICKHOUSE"):
             sinks.append(ClickHouseSink(config.clickhouse))
         if config.duckdb.enabled or export_format in ("DUCK", "DUCKDB"):
             sinks.append(DuckDBSink(config.duckdb))
+        if config.postgresql.enabled or export_format in ("PG", "POSTGRESQL"):
+            sinks.append(PostgreSQLSink(config.postgresql))
 
         start_time = time.time()
         files_created: list[str] = []

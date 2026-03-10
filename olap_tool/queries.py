@@ -182,10 +182,10 @@ def run_dax_query(
         export_format = export_config.format.upper()
         force_csv_only = export_config.force_csv_only
         streaming_xlsx = xlsx_config.streaming
-        ch_only = export_format in ("CH", "CLICKHOUSE", "DUCK", "DUCKDB")
+        sink_only = export_format in ("CH", "CLICKHOUSE", "DUCK", "DUCKDB", "PG", "POSTGRESQL")
 
         # Стрімінговий XLSX (НЕ для режиму clickhouse)
-        if export_format in ("XLSX", "BOTH") and not force_csv_only and streaming_xlsx and not ch_only:
+        if export_format in ("XLSX", "BOTH") and not force_csv_only and streaming_xlsx and not sink_only:
             progress.animation_running = False
             spinner_thread.join(timeout=1.0)
             xlsx_path = year_dir / f"{year_num}-{week_num:02d}.xlsx"
@@ -215,7 +215,7 @@ def run_dax_query(
                 )
             return str(xlsx_path)
 
-        if (export_format == "CSV" or force_csv_only) and not ch_only:
+        if (export_format == "CSV" or force_csv_only) and not sink_only:
             csv_path = year_dir / f"{year_num}-{week_num:02d}.csv"
             row_count = export_csv_stream(
                 cursor, csv_path,
@@ -296,13 +296,13 @@ def run_dax_query(
 
         df.rename(columns=renamed_columns, inplace=True)
 
-        if export_format not in ["XLSX", "CSV", "BOTH", "CH", "CLICKHOUSE", "DUCK", "DUCKDB"]:
+        if export_format not in ["XLSX", "CSV", "BOTH", "CH", "CLICKHOUSE", "DUCK", "DUCKDB", "PG", "POSTGRESQL"]:
             print_warning(
                 f"Невідомий формат експорту: {export_format}. Використовуємо XLSX."
             )
             export_format = "XLSX"
-        export_xlsx_flag = export_format in ["XLSX", "BOTH"] and not ch_only
-        export_csv_flag = export_format in ["CSV", "BOTH"] and not ch_only
+        export_xlsx_flag = export_format in ["XLSX", "BOTH"] and not sink_only
+        export_csv_flag = export_format in ["CSV", "BOTH"] and not sink_only
         exported_files = []
         if export_xlsx_flag and not force_csv_only:
             xlsx_path = year_dir / f"{year_num}-{week_num:02d}.xlsx"
@@ -354,7 +354,7 @@ def run_dax_query(
                 except Exception as e:
                     print_error(f"Помилка sink {type(sink).__name__}: {e}")
 
-        if ch_only:
+        if sink_only:
             return None
         return exported_files[0][0] if exported_files else None
     except Exception as e:

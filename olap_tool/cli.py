@@ -110,8 +110,8 @@ def parse_arguments() -> argparse.Namespace:
     export_group.add_argument(
         '--format',
         type=str,
-        choices=['xlsx', 'csv', 'both'],
-        help='Формат експорту: xlsx, csv або both (за замовчуванням з config.yaml)'
+        choices=['xlsx', 'csv', 'both', 'ch', 'clickhouse', 'duck', 'duckdb', 'pg', 'postgresql'],
+        help='Формат експорту: xlsx, csv, both або аналітичний sink: ch/clickhouse, duck/duckdb, pg/postgresql'
     )
     export_group.add_argument(
         '--filter',
