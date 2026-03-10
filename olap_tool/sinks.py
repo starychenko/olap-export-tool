@@ -447,6 +447,9 @@ class PostgreSQLSink(AnalyticsSink):
 
     Ідемпотентність: DELETE WHERE year_num=X AND week_num=Y → COPY FROM STDIN CSV.
     SSL: sslmode=require (шифрування без перевірки self-signed сертифікату).
+
+    NOT thread-safe: psycopg2-з'єднання не підтримують спільне використання між
+    потоками. Для batch-скриптів з threading створюйте окремий екземпляр на кожен потік.
     """
 
     def __init__(self, config: "PostgreSQLConfig"):
@@ -502,11 +505,15 @@ class PostgreSQLSink(AnalyticsSink):
             f'"{col}" {_pandas_dtype_to_pg(df[col].dtype)}'
             for col in df.columns
         )
-        with conn.cursor() as cur:
-            cur.execute(
-                f"CREATE TABLE IF NOT EXISTS {self._full_table()} ({cols_ddl})"
-            )
-        conn.commit()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._full_table()} ({cols_ddl})"
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         self._refresh_schema()
         with self._schema_lock:
             schema = dict(self._schema) if self._schema is not None else {}
