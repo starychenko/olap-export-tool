@@ -154,21 +154,6 @@ def _pandas_dtype_to_duck(dtype) -> str:
     return "VARCHAR"
 
 
-def _pandas_dtype_to_pg(dtype) -> str:
-    """Конвертує pandas dtype у PostgreSQL SQL тип."""
-    dtype_str = str(dtype)
-    if dtype_str.startswith("int") or dtype_str.startswith("uint"):
-        return "BIGINT"
-    if dtype_str.startswith("float"):
-        return "DOUBLE PRECISION"
-    if dtype_str in ("bool", "boolean"):
-        return "BOOLEAN"
-    if dtype_str.startswith("datetime"):
-        return "TIMESTAMP"
-    if dtype_str.startswith("date"):
-        return "DATE"
-    return "TEXT"
-
 
 _EXCEL_EPOCH = datetime.date(1899, 12, 30)
 _DT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$")
@@ -441,6 +426,21 @@ class DuckDBSink(AnalyticsSink):
 # PostgreSQL sink (psycopg2 + COPY FROM STDIN)
 # ---------------------------------------------------------------------------
 
+def _pandas_dtype_to_pg(dtype) -> str:
+    """Конвертує pandas dtype у PostgreSQL SQL тип."""
+    dtype_str = str(dtype)
+    if dtype_str.startswith("int") or dtype_str.startswith("uint"):
+        return "BIGINT"
+    if dtype_str.startswith("float"):
+        return "DOUBLE PRECISION"
+    if dtype_str in ("bool", "boolean"):
+        return "BOOLEAN"
+    if dtype_str.startswith("datetime"):
+        return "TIMESTAMP"
+    if dtype_str.startswith("date"):
+        return "DATE"
+    return "TEXT"
+
 class PostgreSQLSink(AnalyticsSink):
     """
     Завантажує DataFrame у PostgreSQL через COPY FROM STDIN.
@@ -560,8 +560,6 @@ class PostgreSQLSink(AnalyticsSink):
         if df is None or len(df) == 0:
             return 0
 
-        df = sanitize_df(df)
-
         # Фільтруємо до колонок що є в таблиці
         with self._schema_lock:
             schema = dict(self._schema) if self._schema else {}
@@ -572,15 +570,16 @@ class PostgreSQLSink(AnalyticsSink):
         if df.empty:
             return 0
 
-        # DataFrame → CSV у пам'яті (None → порожній рядок = NULL у COPY)
+        # DataFrame → CSV у пам'яті; \N як sentinel для NULL
+        # (порожній рядок '' зберігається як '', а не як NULL)
         buf = io.StringIO()
-        df.to_csv(buf, index=False, header=False, na_rep="")
+        df.to_csv(buf, index=False, header=False, na_rep="\\N")
         buf.seek(0)
 
         col_list = ", ".join(f'"{c}"' for c in df.columns)
         copy_sql = (
             f"COPY {self._full_table()} ({col_list}) "
-            f"FROM STDIN WITH (FORMAT CSV, NULL '')"
+            r"FROM STDIN WITH (FORMAT CSV, NULL '\N')"
         )
 
         conn = self._get_conn()
