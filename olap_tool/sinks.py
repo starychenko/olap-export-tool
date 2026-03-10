@@ -493,7 +493,6 @@ class PostgreSQLSink(AnalyticsSink):
 
     def setup(self, df: pd.DataFrame) -> None:
         from .utils import print_progress, print_warning
-        df = sanitize_df(df)  # sanitize column names before DDL (must match insert())
         print_progress(
             f"Перевірка таблиці PostgreSQL {self._full_table()} "
             f"({self._config.host}:{self._config.port})..."
