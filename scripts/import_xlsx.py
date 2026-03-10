@@ -373,10 +373,17 @@ def main() -> int:
         console.print(f"\n[yellow]DRY RUN завершено. Файлів: {len(files)}[/yellow]")
         return 0
 
-    # ── Ініціалізація sink та CREATE TABLE з першого файлу ─────────────────
+    # ── Ініціалізація sink та CREATE TABLE з першого непорожнього файлу ──────
+    # Перший файл може бути порожнім → шукаємо перший з даними для setup()
     with console.status(f"[cyan]Ініціалізація {target.upper()}...[/cyan]", spinner="dots"):
         try:
-            df_init = _read_excel(files[0][0], sheet)
+            df_init = pd.DataFrame()
+            init_file_idx = 0
+            for _i, (_fp, _y, _w) in enumerate(files):
+                df_init = _read_excel(_fp, sheet)
+                if not df_init.empty:
+                    init_file_idx = _i
+                    break
 
             if target == "clickhouse":
                 from olap_tool.sinks import ClickHouseSink, sanitize_df
@@ -391,8 +398,8 @@ def main() -> int:
                 init_sink = ClickHouseSink(ClickHouseConfig(**_ch_cfg_kwargs))
                 if not df_init.empty:
                     df_init_clean = sanitize_df(df_init.copy())
-                    df_init_clean["year_num"] = files[0][1]
-                    df_init_clean["week_num"] = files[0][2]
+                    df_init_clean["year_num"] = files[init_file_idx][1]
+                    df_init_clean["week_num"] = files[init_file_idx][2]
                     init_sink.setup(df_init_clean)
                     # Зберігаємо df для ініціалізації thread-local sinks
                     global _ch_setup_df
@@ -407,8 +414,8 @@ def main() -> int:
                 sink = DuckDBSink(cfg)
                 if not df_init.empty:
                     df_init_clean = sanitize_df(df_init.copy())
-                    df_init_clean["year_num"] = files[0][1]
-                    df_init_clean["week_num"] = files[0][2]
+                    df_init_clean["year_num"] = files[init_file_idx][1]
+                    df_init_clean["week_num"] = files[init_file_idx][2]
                     sink.setup(df_init_clean)
 
             else:  # postgresql
@@ -425,8 +432,8 @@ def main() -> int:
                 init_sink = PostgreSQLSink(cfg)
                 if not df_init.empty:
                     df_init_clean = sanitize_df(df_init.copy())
-                    df_init_clean["year_num"] = files[0][1]
-                    df_init_clean["week_num"] = files[0][2]
+                    df_init_clean["year_num"] = files[init_file_idx][1]
+                    df_init_clean["week_num"] = files[init_file_idx][2]
                     init_sink.setup(df_init_clean)
                     # Зберігаємо df для ініціалізації thread-local sinks
                     global _pg_setup_df
