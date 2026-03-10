@@ -76,7 +76,7 @@ _ch_sinks_lock = threading.Lock()
 _ch_setup_df: "Optional[pd.DataFrame]" = None  # зберігається під час init
 
 
-def _get_ch_sink(cfg_kwargs: dict) -> "ClickHouseSink":
+def _get_ch_sink(cfg_kwargs: dict):
     """Повертає thread-local ClickHouseSink.
 
     setup() викликається для кожного нового sink — операція ідемпотентна
@@ -104,7 +104,7 @@ _pg_sinks_lock = threading.Lock()
 _pg_setup_df: "Optional[pd.DataFrame]" = None  # зберігається під час init
 
 
-def _get_pg_sink(cfg_kwargs: dict) -> "PostgreSQLSink":
+def _get_pg_sink(cfg_kwargs: dict):
     """Повертає thread-local PostgreSQLSink.
 
     setup() викликається для кожного нового sink — операція ідемпотентна
