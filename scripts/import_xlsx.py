@@ -73,15 +73,21 @@ except ImportError:
 _ch_local = threading.local()
 _ch_all_sinks: list = []
 _ch_sinks_lock = threading.Lock()
+_ch_setup_df: "Optional[pd.DataFrame]" = None  # зберігається під час init
 
 
-def _get_ch_sink(cfg_kwargs: dict):
-    """Повертає thread-local ClickHouseSink; створює якщо ще немає."""
+def _get_ch_sink(cfg_kwargs: dict) -> "ClickHouseSink":
+    """Повертає thread-local ClickHouseSink.
+
+    setup() викликається для кожного нового sink — операція ідемпотентна
+    (CREATE TABLE IF NOT EXISTS), але необхідна для ініціалізації self._client.
+    """
     if not hasattr(_ch_local, "sink") or _ch_local.sink is None:
         from olap_tool.sinks import ClickHouseSink
         from olap_tool.core.config import ClickHouseConfig
         sink = ClickHouseSink(ClickHouseConfig(**cfg_kwargs))
-        # setup вже викликаний у main() з першим df — тут не викликаємо
+        if _ch_setup_df is not None:
+            sink.setup(_ch_setup_df)  # ідемпотентно; ініціалізує self._client
         _ch_local.sink = sink
         with _ch_sinks_lock:
             _ch_all_sinks.append(sink)
@@ -95,15 +101,21 @@ def _get_ch_sink(cfg_kwargs: dict):
 _pg_local = threading.local()
 _pg_all_sinks: list = []
 _pg_sinks_lock = threading.Lock()
+_pg_setup_df: "Optional[pd.DataFrame]" = None  # зберігається під час init
 
 
-def _get_pg_sink(cfg_kwargs: dict):
-    """Повертає thread-local PostgreSQLSink; створює якщо ще немає."""
+def _get_pg_sink(cfg_kwargs: dict) -> "PostgreSQLSink":
+    """Повертає thread-local PostgreSQLSink.
+
+    setup() викликається для кожного нового sink — операція ідемпотентна
+    (CREATE TABLE IF NOT EXISTS), але необхідна для встановлення з'єднання.
+    """
     if not hasattr(_pg_local, "sink") or _pg_local.sink is None:
         from olap_tool.sinks import PostgreSQLSink
         from olap_tool.core.config import PostgreSQLConfig
         sink = PostgreSQLSink(PostgreSQLConfig(**cfg_kwargs))
-        # setup вже викликаний у main() з першим df — тут не викликаємо
+        if _pg_setup_df is not None:
+            sink.setup(_pg_setup_df)  # ідемпотентно; ініціалізує з'єднання
         _pg_local.sink = sink
         with _pg_sinks_lock:
             _pg_all_sinks.append(sink)
@@ -382,6 +394,9 @@ def main() -> int:
                     df_init_clean["year_num"] = files[0][1]
                     df_init_clean["week_num"] = files[0][2]
                     init_sink.setup(df_init_clean)
+                    # Зберігаємо df для ініціалізації thread-local sinks
+                    global _ch_setup_df
+                    _ch_setup_df = df_init_clean
                 init_sink.close()
                 sink = None  # воркери використовують thread-local sinks
 
@@ -413,6 +428,9 @@ def main() -> int:
                     df_init_clean["year_num"] = files[0][1]
                     df_init_clean["week_num"] = files[0][2]
                     init_sink.setup(df_init_clean)
+                    # Зберігаємо df для ініціалізації thread-local sinks
+                    global _pg_setup_df
+                    _pg_setup_df = df_init_clean
                 init_sink.close()
                 sink = None  # воркери використовують thread-local sinks
 

@@ -125,22 +125,22 @@ class OlapExportScreen(Screen):
                 self._worker.cancel()
 
     def _start_export(self) -> None:
+        # Отримуємо log на головному потоці — query_one небезпечний з executor threads
         log = self.query_one("#export-log", RichLog)
         log.clear()
         argv = self._build_argv()
         log.write(f"[dim]Команда: {' '.join(argv)}[/dim]")
         self.query_one("#run-btn", Button).disabled = True
         self.query_one("#cancel-btn", Button).disabled = False
-        self._worker = self.run_worker(self._do_export(argv), exclusive=True, name="olap-export")
+        self._worker = self.run_worker(self._do_export(argv, log), exclusive=True, name="olap-export")
 
-    async def _do_export(self, argv: list[str]) -> None:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._run_export_sync, argv)
+    async def _do_export(self, argv: list[str], log: RichLog) -> None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._run_export_sync, argv, log)
 
-    def _run_export_sync(self, argv: list[str]) -> None:
+    def _run_export_sync(self, argv: list[str], log: RichLog) -> None:
         from olap_tool.core.runner import main as runner_main
         from olap_tool.core.utils import TUIStream
-        log = self.query_one("#export-log", RichLog)
         stream = TUIStream(self.app, log)
         old_stdout = sys.stdout
         old_argv = sys.argv

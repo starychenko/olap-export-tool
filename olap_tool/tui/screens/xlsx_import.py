@@ -81,21 +81,21 @@ class XlsxImportScreen(Screen):
                 self._worker.cancel()
 
     def _start_import(self) -> None:
+        # Отримуємо log на головному потоці — query_one небезпечний з executor threads
         log = self.query_one("#import-log", RichLog)
         log.clear()
         script_args = self._build_script_args()
         log.write(f"[dim]Команда: python {' '.join(script_args)}[/dim]")
         self.query_one("#run-btn", Button).disabled = True
         self.query_one("#cancel-btn", Button).disabled = False
-        self._worker = self.run_worker(self._do_import(script_args), exclusive=True, name="xlsx-import")
+        self._worker = self.run_worker(self._do_import(script_args, log), exclusive=True, name="xlsx-import")
 
-    async def _do_import(self, script_args: list[str]) -> None:
+    async def _do_import(self, script_args: list[str], log: RichLog) -> None:
         import asyncio
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._run_import_sync, script_args)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._run_import_sync, script_args, log)
 
-    def _run_import_sync(self, script_args: list[str]) -> None:
-        log = self.query_one("#import-log", RichLog)
+    def _run_import_sync(self, script_args: list[str], log: RichLog) -> None:
         stream = TUIStream(self.app, log)
         old_stdout = sys.stdout
         old_argv = sys.argv

@@ -104,43 +104,6 @@ def _align_df_to_schema(df: pd.DataFrame, schema: dict[str, str]) -> pd.DataFram
     return df
 
 
-def _duck_value(v) -> str:
-    """Серіалізує Python-значення у SQL-літерал для DuckDB VALUES."""
-    import math
-    import pandas as pd
-
-    # None, NaT та float NaN → NULL
-    if v is None:
-        return "NULL"
-    try:
-        if pd.isnull(v):
-            return "NULL"
-    except (TypeError, ValueError):
-        pass
-
-    # bool перед int (bool є підкласом int)
-    if isinstance(v, bool):
-        return "TRUE" if v else "FALSE"
-
-    # Числа (Python int/float та numpy scalar types)
-    try:
-        import numpy as np
-        if isinstance(v, (np.integer, np.floating)):
-            if isinstance(v, np.floating) and math.isnan(float(v)):
-                return "NULL"
-            return str(v.item())  # .item() конвертує у Python native type
-    except ImportError:
-        pass
-
-    if isinstance(v, (int, float)):
-        if isinstance(v, float) and math.isnan(v):
-            return "NULL"
-        return str(v)
-
-    # Рядки та datetime — екрануємо одинарні лапки
-    return "'" + str(v).replace("'", "''") + "'"
-
-
 # ---------------------------------------------------------------------------
 # DuckDB sink
 # ---------------------------------------------------------------------------
@@ -236,8 +199,14 @@ class DuckDBSink(AnalyticsSink):
 
     def _refresh_schema(self) -> None:
         result = self._query(f'DESCRIBE "{self._config.table}"')
-        col_idx = result["columns"].index("column_name")
-        type_idx = result["columns"].index("column_type")
+        try:
+            col_idx = result["columns"].index("column_name")
+            type_idx = result["columns"].index("column_type")
+        except (KeyError, ValueError) as exc:
+            raise RuntimeError(
+                f"Несподіваний формат відповіді DESCRIBE від DuckDB API: {exc}. "
+                f"Колонки відповіді: {result.get('columns', '?')}"
+            ) from exc
         with self._schema_lock:
             self._schema = {row[col_idx]: row[type_idx] for row in result["rows"]}
 
