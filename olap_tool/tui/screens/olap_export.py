@@ -12,7 +12,7 @@ from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Selec
 
 
 def _list_profiles() -> list[tuple[str, str]]:
-    """Повертає список доступних профілів як (value, label)."""
+    """Повертає список доступних профілів як (label, value) для Textual Select."""
     # Корінь проєкту = чотири рівні вгору від цього файлу
     # olap_tool/tui/screens/olap_export.py → olap_tool/tui/screens → olap_tool/tui → olap_tool → project root
     project_root = Path(__file__).parent.parent.parent.parent
@@ -22,28 +22,29 @@ def _list_profiles() -> list[tuple[str, str]]:
     return [(p.stem, p.stem) for p in sorted(profiles_dir.glob("*.yaml"))]
 
 
+# Textual Select очікує (label, value)
 FORMAT_OPTIONS = [
-    ("xlsx", "XLSX"),
-    ("csv", "CSV"),
-    ("both", "XLSX + CSV"),
-    ("ch", "ClickHouse"),
-    ("duck", "DuckDB"),
-    ("pg", "PostgreSQL"),
+    ("XLSX", "xlsx"),
+    ("CSV", "csv"),
+    ("XLSX + CSV", "both"),
+    ("ClickHouse", "ch"),
+    ("DuckDB", "duck"),
+    ("PostgreSQL", "pg"),
 ]
 
 PERIOD_OPTIONS = [
-    ("last-weeks", "Останні N тижнів"),
-    ("current-month", "Поточний місяць"),
-    ("last-month", "Попередній місяць"),
-    ("current-quarter", "Поточний квартал"),
-    ("last-quarter", "Попередній квартал"),
-    ("year-to-date", "З початку року"),
-    ("manual", "Ручний діапазон"),
+    ("Останні N тижнів", "last-weeks"),
+    ("Поточний місяць", "current-month"),
+    ("Попередній місяць", "last-month"),
+    ("Поточний квартал", "current-quarter"),
+    ("Попередній квартал", "last-quarter"),
+    ("З початку року", "year-to-date"),
+    ("Ручний діапазон", "manual"),
 ]
 
 COMPRESS_OPTIONS = [
-    ("none", "Без стиснення"),
-    ("zip", "ZIP архів"),
+    ("Без стиснення", "none"),
+    ("ZIP архів", "zip"),
 ]
 
 
@@ -61,7 +62,7 @@ class OlapExportScreen(Screen):
                 if profiles:
                     yield Select(profiles, id="profile-select", allow_blank=True, prompt="(без профілю)")
                 else:
-                    yield Select([("", "(немає профілів)")], id="profile-select", allow_blank=True, prompt="(без профілю)")
+                    yield Select([("(немає профілів)", "")], id="profile-select", allow_blank=True, prompt="(без профілю)")
 
                 yield Label("Формат:", classes="field-label")
                 yield Select(FORMAT_OPTIONS, id="format-select", value="xlsx")
