@@ -103,6 +103,20 @@ class DuckDBConfig:
 
 
 @dataclass
+class PostgreSQLConfig:
+    """Налаштування підключення до PostgreSQL."""
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 5432
+    database: str = "analytics"
+    user: str = "analytics"
+    password: str = ""
+    schema: str = "public"
+    table: str = "sales"
+    ssl_mode: str = "require"
+
+
+@dataclass
 class DisplayConfig:
     ascii_logs: bool = False
     debug: bool = False
@@ -121,6 +135,7 @@ class AppConfig:
     display: DisplayConfig = field(default_factory=DisplayConfig)
     clickhouse: ClickHouseConfig = field(default_factory=ClickHouseConfig)
     duckdb: DuckDBConfig = field(default_factory=DuckDBConfig)
+    postgresql: PostgreSQLConfig = field(default_factory=PostgreSQLConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +183,25 @@ def load_duckdb_from_env() -> DuckDBConfig:
         api_key=os.getenv("DUCK_API_KEY", ""),
         table=os.getenv("DUCK_TABLE", "sales"),
         batch_size=batch_size,
+    )
+
+
+def load_postgres_from_env() -> PostgreSQLConfig:
+    """Читає налаштування PostgreSQL з os.environ."""
+    try:
+        pg_port = int(os.getenv("PG_PORT", "5432"))
+    except (ValueError, TypeError):
+        pg_port = 5432
+    return PostgreSQLConfig(
+        enabled=_parse_bool(os.getenv("PG_ENABLED", "false"), False),
+        host=os.getenv("PG_HOST", "localhost"),
+        port=pg_port,
+        database=os.getenv("PG_DATABASE", "analytics"),
+        user=os.getenv("PG_USER", "analytics"),
+        password=os.getenv("PG_PASSWORD", ""),
+        schema=os.getenv("PG_SCHEMA", "public"),
+        table=os.getenv("PG_TABLE", "sales"),
+        ssl_mode=os.getenv("PG_SSL_MODE", "require"),
     )
 
 
@@ -264,7 +298,7 @@ def apply_legacy_env_compat(base: dict) -> dict:
 
 def apply_profile(base: dict, profile: dict) -> dict:
     """Deep-merge секцій профілю поверх base."""
-    for section in ("query", "export", "xlsx", "csv", "excel_header", "paths", "display", "clickhouse", "duckdb"):
+    for section in ("query", "export", "xlsx", "csv", "excel_header", "paths", "display", "clickhouse", "duckdb", "postgresql"):
         if section in profile:
             base.setdefault(section, {})
             base[section].update(profile[section])
@@ -363,6 +397,13 @@ def build_config(args=None, profile_config: Optional[dict] = None) -> AppConfig:
     for k, v in duck_env_dict.items():
         base["duckdb"].setdefault(k, v)
 
+    # PostgreSQL: env задає defaults, profile може перевизначити
+    pg_env = load_postgres_from_env()
+    pg_env_dict = {f.name: getattr(pg_env, f.name) for f in dataclass_fields(pg_env)}
+    base.setdefault("postgresql", {})
+    for k, v in pg_env_dict.items():
+        base["postgresql"].setdefault(k, v)
+
     # 6. Збираємо AppConfig
     return AppConfig(
         secrets=secrets,
@@ -375,4 +416,5 @@ def build_config(args=None, profile_config: Optional[dict] = None) -> AppConfig:
         display=_build_section(DisplayConfig, base, "display"),
         clickhouse=_build_section(ClickHouseConfig, base, "clickhouse"),
         duckdb=_build_section(DuckDBConfig, base, "duckdb"),
+        postgresql=_build_section(PostgreSQLConfig, base, "postgresql"),
     )
