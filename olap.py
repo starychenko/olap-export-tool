@@ -1,18 +1,24 @@
+#!/usr/bin/env python3
+"""
+OLAP Export Tool — точка входу.
+
+Без аргументів → запускає Textual TUI.
+З аргументами → CLI режим.
+"""
 import sys
-import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Гарантуємо UTF-8 вивід для консолі
 if hasattr(sys.stdout, "reconfigure"):
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
 
-from olap_tool.core.runner import main
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+if len(sys.argv) == 1:
+    from olap_tool.tui.app import OlapApp
+    OlapApp().run()
+else:
+    from olap_tool.core.runner import main
+    sys.exit(main())

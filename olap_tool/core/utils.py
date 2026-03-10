@@ -115,6 +115,42 @@ def format_time(seconds: float):
         return f"{seconds:.2f} сек"
 
 
+# ---------------------------------------------------------------------------
+# TUI stdout redirect
+# ---------------------------------------------------------------------------
+import re as _re
+import io as _io
+
+_ANSI_ESCAPE = _re.compile(r"\x1b\[[0-9;]*m")
+
+
+class TUIStream:
+    """
+    Замінює sys.stdout під час роботи TUI.
+    Перехоплює всі print() виклики та пише чистий текст у Textual RichLog.
+    Потокобезпечний через app.call_from_thread().
+    """
+
+    def __init__(self, app, log_widget):
+        self._app = app
+        self._log = log_widget
+        self._buf = ""
+
+    def write(self, text: str) -> None:
+        self._buf += text
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            clean = _ANSI_ESCAPE.sub("", line)
+            if clean:
+                self._app.call_from_thread(self._log.write, clean)
+
+    def flush(self) -> None:
+        pass
+
+    def fileno(self):
+        raise _io.UnsupportedOperation("no fileno")
+
+
 def convert_dotnet_to_python(value):
     """Конвертує .NET типи (через pythonnet) у серіалізовані Python значення для запису в CSV/XLSX."""
     try:
