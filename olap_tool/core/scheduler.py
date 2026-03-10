@@ -316,5 +316,3 @@ def daemon_mode(profiles: List[str]) -> int:
 
     print_info("Daemon режим зупинено")
     return 0
-
-

@@ -8,7 +8,7 @@ from .security import (
     encrypt_credentials,
     decrypt_credentials,
 )
-from .utils import print_info, print_error
+from ..core.utils import print_info, print_error
 
 
 auth_username: str | None = None

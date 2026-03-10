@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Tuple
 import pandas as pd
 import xlsxwriter  # type: ignore
 
-from .utils import print_progress, convert_dotnet_to_python
-from . import progress
+from ..core.utils import print_progress, convert_dotnet_to_python
+from ..core import progress
 
 if TYPE_CHECKING:
-    from .config import ExcelHeaderConfig, XlsxConfig
+    from ..core.config import ExcelHeaderConfig, XlsxConfig
 
 
 def export_csv_stream(

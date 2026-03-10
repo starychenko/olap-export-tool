@@ -9,7 +9,7 @@ from .auth import (
     get_current_windows_user,
 )
 from .prompt import prompt_credentials
-from .utils import (
+from ..core.utils import (
     print_info,
     print_info_detail,
     print_success,
@@ -19,7 +19,7 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from .config import SecretsConfig
+    from ..core.config import SecretsConfig
 
 # Константи для методів автентифікації
 AUTH_SSPI = "SSPI"

@@ -2,7 +2,7 @@ import getpass
 from typing import Optional
 from colorama import Fore
 
-from .utils import print_info
+from ..core.utils import print_info
 
 
 def prompt_credentials(with_domain: bool = False, domain: Optional[str] = None):

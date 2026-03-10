@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from .utils import (
+from ..core.utils import (
     print_info,
     print_warning,
     print_error,
@@ -18,10 +18,10 @@ from .utils import (
     ensure_dir,
 )
 from .exporter import export_csv_stream, export_xlsx_dataframe, export_xlsx_stream
-from . import progress
+from ..core import progress
 
 if TYPE_CHECKING:
-    from .config import QueryConfig, ExportConfig, XlsxConfig, CsvConfig, ExcelHeaderConfig, PathsConfig, ClickHouseConfig
+    from ..core.config import QueryConfig, ExportConfig, XlsxConfig, CsvConfig, ExcelHeaderConfig, PathsConfig, ClickHouseConfig
 
 
 def generate_year_week_pairs(start_period, end_period, available_weeks):
@@ -342,7 +342,7 @@ def run_dax_query(
 
         # Analytics sinks (ClickHouse, DuckDB, тощо)
         if sinks:
-            from .sinks import sanitize_df as _sanitize
+            from ..sinks import sanitize_df as _sanitize
             df_for_sinks = _sanitize(df)
             df_for_sinks["year_num"] = year_num
             df_for_sinks["week_num"] = week_num

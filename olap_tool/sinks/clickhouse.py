@@ -22,7 +22,7 @@ import pandas as pd
 from .base import AnalyticsSink, sanitize_df, _safe_column_name  # noqa: F401
 
 if TYPE_CHECKING:
-    from ..config import ClickHouseConfig
+    from ..core.config import ClickHouseConfig
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ def _align_df_to_table(
 
     schema: якщо передано — не робить зайвий запит до system.columns.
     """
-    from ..utils import print_warning
+    from ..core.utils import print_warning
 
     if schema is None:
         schema = get_table_schema(client, database, table)
@@ -231,7 +231,7 @@ def export_to_clickhouse(
     Returns:
         Кількість завантажених рядків.
     """
-    from ..utils import print_success, print_warning, print_error, print_progress
+    from ..core.utils import print_success, print_warning, print_error, print_progress
 
     def _log(fn, msg):
         if not silent:
@@ -313,7 +313,7 @@ class ClickHouseSink(AnalyticsSink):
         self._schema: dict | None = None
 
     def setup(self, df: pd.DataFrame) -> None:
-        from ..utils import print_progress
+        from ..core.utils import print_progress
         if self._own_client:
             print_progress(
                 f"Підключення до ClickHouse ({self._config.host}:{self._config.port})..."

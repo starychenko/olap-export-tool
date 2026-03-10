@@ -18,7 +18,7 @@ import pandas as pd
 from .base import AnalyticsSink, sanitize_df
 
 if TYPE_CHECKING:
-    from ..config import DuckDBConfig
+    from ..core.config import DuckDBConfig
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +190,7 @@ class DuckDBSink(AnalyticsSink):
         return resp.json()
 
     def setup(self, df: pd.DataFrame) -> None:
-        from ..utils import print_progress, print_warning
+        from ..core.utils import print_progress, print_warning
         print_progress(f"Перевірка таблиці DuckDB `{self._config.table}`...")
         cols_ddl = ", ".join(
             f'"{col}" {_pandas_dtype_to_duck(df[col].dtype)}'

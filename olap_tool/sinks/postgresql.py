@@ -18,7 +18,7 @@ import pandas as pd
 from .base import AnalyticsSink, sanitize_df
 
 if TYPE_CHECKING:
-    from ..config import PostgreSQLConfig
+    from ..core.config import PostgreSQLConfig
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ class PostgreSQLSink(AnalyticsSink):
             self._schema = {row[0]: row[1] for row in rows}
 
     def setup(self, df: pd.DataFrame) -> None:
-        from ..utils import print_progress, print_warning
+        from ..core.utils import print_progress, print_warning
         print_progress(
             f"Перевірка таблиці PostgreSQL {self._full_table()} "
             f"({self._config.host}:{self._config.port})..."

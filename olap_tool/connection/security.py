@@ -7,7 +7,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-from .utils import print_info, print_warning, print_error
+from ..core.utils import print_info, print_warning, print_error
 
 
 def get_machine_id() -> str:
