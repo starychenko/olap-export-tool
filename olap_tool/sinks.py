@@ -8,6 +8,7 @@ Analytics Sink абстракція.
 from __future__ import annotations
 
 import datetime
+import io
 import re
 from abc import ABC, abstractmethod
 
@@ -448,9 +449,11 @@ class PostgreSQLSink(AnalyticsSink):
     """
 
     def __init__(self, config: "PostgreSQLConfig"):
+        import threading
         self._config = config
         self._conn = None
         self._schema: dict[str, str] | None = None
+        self._schema_lock = threading.Lock()
 
     def _get_conn(self):
         """Повертає активне з'єднання, створює нове якщо потрібно."""
@@ -485,10 +488,12 @@ class PostgreSQLSink(AnalyticsSink):
                 (self._config.schema, self._config.table),
             )
             rows = cur.fetchall()
-        self._schema = {row[0]: row[1] for row in rows}
+        with self._schema_lock:
+            self._schema = {row[0]: row[1] for row in rows}
 
     def setup(self, df: pd.DataFrame) -> None:
         from .utils import print_progress, print_warning
+        df = sanitize_df(df)  # sanitize column names before DDL (must match insert())
         print_progress(
             f"Перевірка таблиці PostgreSQL {self._full_table()} "
             f"({self._config.host}:{self._config.port})..."
@@ -504,10 +509,12 @@ class PostgreSQLSink(AnalyticsSink):
             )
         conn.commit()
         self._refresh_schema()
+        with self._schema_lock:
+            schema = dict(self._schema) if self._schema is not None else {}
 
         # Додаємо нові колонки яких немає в таблиці
         for col in df.columns:
-            if col not in (self._schema or {}):
+            if col not in schema:
                 dtype = _pandas_dtype_to_pg(df[col].dtype)
                 try:
                     with conn.cursor() as cur:
@@ -516,8 +523,9 @@ class PostgreSQLSink(AnalyticsSink):
                             f'ADD COLUMN IF NOT EXISTS "{col}" {dtype}'
                         )
                     conn.commit()
-                    if self._schema is not None:
-                        self._schema[col] = dtype
+                    with self._schema_lock:
+                        if self._schema is not None:
+                            self._schema[col] = dtype
                 except Exception as e:
                     conn.rollback()
                     print_warning(f"Не вдалося додати колонку `{col}`: {e} — пропускаємо")
@@ -525,7 +533,8 @@ class PostgreSQLSink(AnalyticsSink):
     def delete_period(self, year: int, week: int) -> None:
         if self._schema is None:
             self._refresh_schema()
-        schema = self._schema or {}
+        with self._schema_lock:
+            schema = dict(self._schema) if self._schema is not None else {}
         if "year_num" not in schema or "week_num" not in schema:
             return
         conn = self._get_conn()
@@ -538,15 +547,16 @@ class PostgreSQLSink(AnalyticsSink):
         conn.commit()
 
     def insert(self, df: pd.DataFrame, year: int, week: int) -> int:
-        import io
         if df is None or len(df) == 0:
             return 0
 
         df = sanitize_df(df)
 
         # Фільтруємо до колонок що є в таблиці
-        if self._schema:
-            cols = [c for c in df.columns if c in self._schema]
+        with self._schema_lock:
+            schema = dict(self._schema) if self._schema else {}
+        if schema:
+            cols = [c for c in df.columns if c in schema]
             df = df[cols]
 
         if df.empty:
