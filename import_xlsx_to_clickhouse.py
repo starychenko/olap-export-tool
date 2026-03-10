@@ -46,7 +46,7 @@ from rich.text import Text
 from rich import box
 
 from olap_tool.config import load_clickhouse_from_env
-from olap_tool.clickhouse_export import (
+from olap_tool.sinks.clickhouse import (
     export_to_clickhouse,
     create_client,
     ensure_database,
