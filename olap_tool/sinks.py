@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import io
 import re
+import threading
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -449,7 +450,6 @@ class PostgreSQLSink(AnalyticsSink):
     """
 
     def __init__(self, config: "PostgreSQLConfig"):
-        import threading
         self._config = config
         self._conn = None
         self._schema: dict[str, str] | None = None
@@ -538,13 +538,17 @@ class PostgreSQLSink(AnalyticsSink):
         if "year_num" not in schema or "week_num" not in schema:
             return
         conn = self._get_conn()
-        with conn.cursor() as cur:
-            cur.execute(
-                f"DELETE FROM {self._full_table()} "
-                f"WHERE year_num = %s AND week_num = %s",
-                (year, week),
-            )
-        conn.commit()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {self._full_table()} "
+                    f"WHERE year_num = %s AND week_num = %s",
+                    (year, week),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
     def insert(self, df: pd.DataFrame, year: int, week: int) -> int:
         if df is None or len(df) == 0:
@@ -574,9 +578,13 @@ class PostgreSQLSink(AnalyticsSink):
         )
 
         conn = self._get_conn()
-        with conn.cursor() as cur:
-            cur.copy_expert(copy_sql, buf)
-        conn.commit()
+        try:
+            with conn.cursor() as cur:
+                cur.copy_expert(copy_sql, buf)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         return len(df)
 
     def close(self) -> None:
