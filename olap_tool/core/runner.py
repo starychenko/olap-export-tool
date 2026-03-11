@@ -15,16 +15,16 @@ from .utils import (
     init_utils,
 )
 from .config import build_config
-from .connection import connect_to_olap, get_connection_string, AUTH_SSPI
-from .queries import get_available_weeks, generate_year_week_pairs, run_dax_query
-from .auth import delete_credentials, get_current_windows_user, auth_username
+from ..connection.connection import connect_to_olap, get_connection_string, AUTH_SSPI
+from ..data.queries import get_available_weeks, generate_year_week_pairs, run_dax_query
+from ..connection.auth import delete_credentials, get_current_windows_user, auth_username
 from .progress import TimeTracker, countdown_timer, init_display
 from .cli import parse_arguments, validate_arguments
 from . import periods
 from .compression import compress_files
 from .profiles import load_profile, print_profiles_list
 from .scheduler import start_scheduler, daemon_mode
-from .sinks import ClickHouseSink, DuckDBSink, PostgreSQLSink
+from ..sinks import ClickHouseSink, DuckDBSink, PostgreSQLSink
 
 
 CURRENT_YEAR = datetime.datetime.now().year

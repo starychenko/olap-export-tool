@@ -115,6 +115,59 @@ def format_time(seconds: float):
         return f"{seconds:.2f} сек"
 
 
+# ---------------------------------------------------------------------------
+# TUI stdout redirect
+# ---------------------------------------------------------------------------
+import re as _re
+import io as _io
+
+_ANSI_ESCAPE = _re.compile(r"\x1b\[[0-9;]*m")
+
+
+class TUIStream:
+    """
+    Замінює sys.stdout під час роботи TUI.
+    Перехоплює всі print() виклики та пише чистий текст у Textual RichLog.
+    Потокобезпечний через app.call_from_thread().
+    """
+
+    def __init__(self, app, log_widget, status_widget):
+        self._app = app
+        self._log = log_widget
+        self._status = status_widget
+        self._buf = ""
+
+    def write(self, text: str) -> None:
+        self._buf += text
+        
+        # If the text explicitly starts with \r, it's a progress update
+        # We process it right away and don't buffer it to RichLog
+        if "\r" in text:
+            clean = _ANSI_ESCAPE.sub("", text).replace("\r", "").strip()
+            if clean:
+                self._app.call_from_thread(self._status.update, clean)
+            self._buf = "" # Clear buffer so we don't accidentally push this to log
+            return
+
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            # Remove ANSI codes and clean standard log lines
+            clean = _ANSI_ESCAPE.sub("", line).strip()
+            if clean:
+                self._app.call_from_thread(self._status.update, "") # Clear status on real log message
+                self._app.call_from_thread(self._log.write, clean)
+
+    def flush(self) -> None:
+        if self._buf:
+            clean = _ANSI_ESCAPE.sub("", self._buf).strip()
+            self._buf = ""
+            if clean:
+                self._app.call_from_thread(self._log.write, clean)
+
+    def fileno(self):
+        raise _io.UnsupportedOperation("no fileno")
+
+
 def convert_dotnet_to_python(value):
     """Конвертує .NET типи (через pythonnet) у серіалізовані Python значення для запису в CSV/XLSX."""
     try:

@@ -7,58 +7,45 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-from .utils import print_info, print_warning, print_error
+from ..core.utils import print_info, print_warning, print_error
 
 
 def get_machine_id() -> str:
+    """
+    Генерує стабільний ідентифікатор пристрою, що не змінюється залежно від
+    типу терміналу (Git Bash, CMD, PowerShell, планувальник).
+    Використовує platform.node() замість змінних середовища, які можуть
+    відрізнятися або бути відсутніми в різних оточеннях.
+    """
     try:
-        identifiers: list[str] = []
-        # OS-identity vars — не є конфігурацією додатку
-        computer_name = os.environ.get("COMPUTERNAME", "")
-        if computer_name:
-            identifiers.append(computer_name)
-        user_domain = os.environ.get("USERDOMAIN", "")
-        if user_domain:
-            identifiers.append(user_domain)
-        username = os.environ.get("USERNAME", "")
-        if username:
-            identifiers.append(username)
-        windows_dir = os.environ.get("WINDIR", "")
-        if windows_dir:
-            identifiers.append(windows_dir)
-        system_drive = os.environ.get("SystemDrive", "")
-        if system_drive:
-            identifiers.append(system_drive)
-        try:
-            import subprocess
-
-            volume_info = subprocess.run(
-                f"vol {system_drive}", shell=True, capture_output=True, text=True
-            )
-            if volume_info.returncode == 0:
-                for line in volume_info.stdout.strip().split("\n"):
-                    if "Serial Number" in line or "Серійний номер" in line:
-                        identifiers.append(line.strip())
-        except Exception:
-            pass
-
         import hashlib
+        import platform
+        import getpass
 
-        unique_id = "-".join(identifiers)
-        if not unique_id:
-            unique_id = "windows-fallback"
-            print_warning(
-                "Не вдалося отримати стабільні ідентифікатори системи, використовуємо запасний варіант"
-            )
-        return hashlib.md5(unique_id.encode()).hexdigest()
+        hostname = platform.node() or "unknown_host"
+        username = _safe_getuser()
+        unique_id = f"{hostname.lower()}-{username.lower()}"
+        return hashlib.md5(unique_id.encode("utf-8")).hexdigest()
     except Exception as e:
         print_warning(f"Не вдалося отримати унікальний ідентифікатор пристрою: {e}")
         import hashlib
+        fallback = f"user-{os.environ.get('USERNAME', 'unknown')}"
+        return hashlib.md5(fallback.encode("utf-8")).hexdigest()
 
-        fallback = (
-            f"user-{os.environ.get('USERNAME', '')}-{os.environ.get('WINDIR', '')}"
+
+def _safe_getuser() -> str:
+    """Безпечно отримує ім'я поточного користувача, обходячи баг `getpass.getuser()` у Git Bash."""
+    import getpass
+    try:
+        return getpass.getuser()
+    except Exception:
+        # getpass.getuser() може впасти у деяких середовищах (особливо в Git Bash на Windows)
+        return (
+            os.environ.get("USERNAME")
+            or os.environ.get("USER")
+            or os.environ.get("LOGNAME")
+            or "unknown_user"
         )
-        return hashlib.md5(fallback.encode()).hexdigest()
 
 
 def generate_encryption_key(
