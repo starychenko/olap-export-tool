@@ -17,8 +17,15 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 if len(sys.argv) == 1:
+    import os
     from olap_tool.tui.app import OlapApp
-    OlapApp().run()
+    try:
+        OlapApp().run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # Примусово завершуємо всі фонові потоки (наприклад, завислі запити до БД)
+        os._exit(0)
 else:
     from olap_tool.core.runner import main
     sys.exit(main())

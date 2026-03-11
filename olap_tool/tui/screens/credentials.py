@@ -14,22 +14,34 @@ class CredentialsDialog(ModalScreen[tuple[str, str] | None]):
     }
     #cred-dialog {
         padding: 1 2;
-        width: 50;
+        width: 60;
         height: auto;
-        border: thick $primary;
+        border: solid $primary;
+        border-title-color: $text;
+        border-title-style: bold;
         background: $surface;
     }
     #cred-dialog Label {
         margin-bottom: 1;
+        color: $text;
     }
     #cred-dialog Input {
+        width: 100%;
         margin-bottom: 1;
+        background: $panel;
+        border: none;
+    }
+    #cred-dialog Input:focus {
+        border: tall $primary;
     }
     #cred-buttons {
         width: 100%;
+        height: auto;
+        margin-top: 1;
         align: center middle;
     }
     #cred-buttons Button {
+        width: 22;
         margin: 0 1;
     }
     """
@@ -41,7 +53,8 @@ class CredentialsDialog(ModalScreen[tuple[str, str] | None]):
         self.ask_login = ask_login
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="cred-dialog"):
+        with Vertical(id="cred-dialog") as dialog:
+            dialog.border_title = "Авторизація"
             yield Label(self.message)
             if self.domain and self.ask_login:
                 yield Label(f"Домен: {self.domain}", classes="text-muted")
@@ -49,15 +62,22 @@ class CredentialsDialog(ModalScreen[tuple[str, str] | None]):
                 yield Input(placeholder="Логін", id="login-input")
             yield Input(placeholder="Пароль", password=True, id="password-input")
             with Horizontal(id="cred-buttons"):
-                yield Button("ОК", variant="primary", id="ok-btn")
-                yield Button("Скасувати", variant="error", id="cancel-btn")
+                yield Button("✓  ОК", variant="primary", id="ok-btn")
+                yield Button("✕  Скасувати", variant="error", id="cancel-btn")
+
+    def on_input_submitted(self, event: "Input.Submitted") -> None:
+        """Натискання Enter у полі вводу підтверджує форму."""
+        self._submit()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "ok-btn":
-            login = ""
-            if self.ask_login:
-                login = self.query_one("#login-input", Input).value.strip()
-            pwd = self.query_one("#password-input", Input).value
-            self.dismiss((login, pwd))
+            self._submit()
         elif event.button.id == "cancel-btn":
             self.dismiss(None)
+
+    def _submit(self) -> None:
+        login = ""
+        if self.ask_login:
+            login = self.query_one("#login-input", Input).value.strip()
+        pwd = self.query_one("#password-input", Input).value
+        self.dismiss((login, pwd))

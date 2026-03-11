@@ -151,6 +151,7 @@ class TimeTracker:
 
 def loading_spinner(description: str, estimated_time: float | None = None):
     global animation_running
+    
     animation_running = True
     spinner = itertools.cycle(SPINNER_FRAMES)
     start_time = time.time()
@@ -163,8 +164,11 @@ def loading_spinner(description: str, estimated_time: float | None = None):
         sys.stdout.write(message)
         sys.stdout.flush()
         time.sleep(0.1)
-    sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
-    sys.stdout.flush()
+    # Don't print empty clears in TUI mode to avoid status bar stutter
+    if not hasattr(sys.stdout, "_app"):
+        sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
 
 def streaming_spinner(
@@ -190,7 +194,10 @@ def streaming_spinner(
         sys.stdout.flush()
         last_message = message
         time.sleep(interval_s)
-    sys.stdout.write("\r" + " " * (len(last_message) + 2) + "\r")
+    if hasattr(sys.stdout, "_app"):
+        sys.stdout.write(f"\r{Fore.BLUE}[{get_current_time()}] {COUNTDOWN_ICON} Завершено: {rows_fn()} рядків\n")
+    else:
+        sys.stdout.write("\r" + " " * (len(last_message) + 2) + "\r")
     sys.stdout.flush()
 
 
@@ -202,4 +209,4 @@ def countdown_timer(seconds: int):
         )
         sys.stdout.flush()
         time.sleep(1)
-    print()
+    sys.stdout.write("\n")

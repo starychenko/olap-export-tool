@@ -8,7 +8,7 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Checkbox, Footer, Header, Input, Label, RadioButton, RadioSet, RichLog
+from textual.widgets import Button, Checkbox, Footer, Header, Input, Label, RadioButton, RadioSet, RichLog, LoadingIndicator, Static
 
 from olap_tool.core.utils import TUIStream
 
@@ -21,7 +21,8 @@ class XlsxImportScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal():
-            with Vertical(classes="form-container"):
+            with Vertical(classes="form-container") as form:
+                form.border_title = "Параметри Імпорту"
                 yield Label("Ціль:", classes="field-label")
                 with RadioSet(id="target-radio"):
                     yield RadioButton("ClickHouse", id="target-ch", value=True)
@@ -42,12 +43,19 @@ class XlsxImportScreen(Screen):
 
                 yield Checkbox("Dry Run (без запису)", id="dry-run-check")
 
-                yield Button("Запустити", variant="primary", id="run-btn")
-                yield Button("Скасувати", variant="error", id="cancel-btn", disabled=True)
+                yield Button("▶  Запустити", variant="primary", id="run-btn")
+                yield Button("■  Зупинити імпорт", variant="error", id="cancel-btn", disabled=True)
+                yield Button("↩  Назад", id="back-btn")
 
-            with Vertical(id="log-panel"):
+            with Vertical(id="log-panel") as log_panel:
+                log_panel.border_title = "Журнал виконання"
                 yield RichLog(id="import-log", highlight=True, markup=True, wrap=True)
+                yield Static("", id="import-status", classes="status-bar")
+                yield LoadingIndicator(id="import-loading")
         yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#import-loading", LoadingIndicator).display = False
 
     def _get_target(self) -> str:
         radio = self.query_one("#target-radio", RadioSet)
@@ -79,46 +87,72 @@ class XlsxImportScreen(Screen):
         elif event.button.id == "cancel-btn":
             if hasattr(self, "_worker"):
                 self._worker.cancel()
+        elif event.button.id == "back-btn":
+            self.app.pop_screen()
 
     def _start_import(self) -> None:
         # Отримуємо log на головному потоці — query_one небезпечний з executor threads
         log = self.query_one("#import-log", RichLog)
+        status = self.query_one("#import-status", Static)
         log.clear()
+        status.update("")
         script_args = self._build_script_args()
         log.write(f"[dim]Команда: python {' '.join(script_args)}[/dim]")
         self.query_one("#run-btn", Button).disabled = True
         self.query_one("#cancel-btn", Button).disabled = False
-        self._worker = self.run_worker(self._do_import(script_args, log), exclusive=True, name="xlsx-import")
+        self.query_one("#import-loading", LoadingIndicator).display = True
+        self._worker = self.run_worker(self._do_import(script_args, log, status), exclusive=True, name="xlsx-import")
 
-    async def _do_import(self, script_args: list[str], log: RichLog) -> None:
+    async def _do_import(self, script_args: list[str], log: RichLog, status: Static) -> None:
         import asyncio
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._run_import_sync, script_args, log)
+        await loop.run_in_executor(None, self._run_import_sync, script_args, log, status)
 
-    def _run_import_sync(self, script_args: list[str], log: RichLog) -> None:
-        stream = TUIStream(self.app, log)
+    def _run_import_sync(self, script_args: list[str], log: RichLog, status: Static) -> None:
+        stream = TUIStream(self.app, log, status)
         old_stdout = sys.stdout
         old_argv = sys.argv
         sys.stdout = stream
         sys.argv = script_args
+        success = False
         try:
-            script_path = Path(__file__).parent.parent.parent.parent / "scripts" / "import_xlsx.py"
+            script_path = (
+                Path(__file__).parent.parent.parent.parent / "scripts" / "import_xlsx.py"
+            )
             spec = importlib.util.spec_from_file_location("import_xlsx", script_path)
             if spec is None or spec.loader is None:
                 raise ImportError(f"Не вдалося завантажити: {script_path}")
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)  # type: ignore[union-attr]
             mod.main()
-            self.app.call_from_thread(log.write, "[bold green]✓ Імпорт завершено[/bold green]")
-        except SystemExit:
-            pass
+            self.app.call_from_thread(
+                log.write, "[bold green]✓ Імпорт завершено[/bold green]"
+            )
+            success = True
+        except SystemExit as se:
+            success = (se.code == 0) if se.code is not None else True
         except Exception as exc:
             self.app.call_from_thread(log.write, f"[bold red]✗ Помилка: {exc}[/bold red]")
+            success = False
         finally:
             sys.argv = old_argv
             sys.stdout = old_stdout
-            self.app.call_from_thread(self._on_done)
+            self.app.call_from_thread(self._on_done, success)
 
-    def _on_done(self) -> None:
+    def _on_done(self, success: bool = False) -> None:
         self.query_one("#run-btn", Button).disabled = False
         self.query_one("#cancel-btn", Button).disabled = True
+        self.query_one("#import-loading", LoadingIndicator).display = False
+        self.query_one("#import-status", Static).update("")
+
+        if success:
+            self.app.notify(
+                "Імпорт завершено успішно ✔", title="Готово", severity="information"
+            )
+        else:
+            self.app.notify(
+                "Імпорт завершився з помилкою. Перевірте журнал …",
+                title="Помилка",
+                severity="error",
+            )
+

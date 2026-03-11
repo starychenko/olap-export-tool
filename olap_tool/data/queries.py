@@ -17,7 +17,7 @@ from ..core.utils import (
     convert_dotnet_to_python,
     ensure_dir,
 )
-from .exporter import export_csv_stream, export_xlsx_dataframe, export_xlsx_stream
+# CsvStreamWriter / XlsxStreamWriter are imported lazily inside run_dax_query
 from ..core import progress
 
 if TYPE_CHECKING:
@@ -172,7 +172,7 @@ def run_dax_query(
     try:
         cursor = connection.cursor()
         cursor.execute(query)
-        estimated_query_time = 120
+        estimated_query_time = query_config.timeout
         spinner_thread = threading.Thread(
             target=progress.loading_spinner,
             args=("Отримання даних з OLAP кубу", estimated_query_time),
@@ -181,110 +181,52 @@ def run_dax_query(
 
         export_format = export_config.format.upper()
         force_csv_only = export_config.force_csv_only
-        streaming_xlsx = xlsx_config.streaming
         sink_only = export_format in ("CH", "CLICKHOUSE", "DUCK", "DUCKDB", "PG", "POSTGRESQL")
 
-        # Стрімінговий XLSX (НЕ для режиму clickhouse)
-        if export_format in ("XLSX", "BOTH") and not force_csv_only and streaming_xlsx and not sink_only:
-            progress.animation_running = False
-            spinner_thread.join(timeout=1.0)
+        needs_xlsx = (export_format in ["XLSX", "BOTH"]) and not force_csv_only and not sink_only
+        needs_csv = (export_format in ["CSV", "BOTH"] or force_csv_only) and not sink_only
+
+        from .exporter import CsvStreamWriter, XlsxStreamWriter
+
+        xlsx_writer = None
+        csv_writer = None
+        exported_files = []
+
+        if needs_xlsx:
             xlsx_path = year_dir / f"{year_num}-{week_num:02d}.xlsx"
-            row_count, xlsx_size = export_xlsx_stream(
-                cursor, xlsx_path, f"{year_num}-{week_num:02d}",
-                excel_header, xlsx_config,
-            )
-            query_duration = _time.time() - query_start_time
-            print_success(
-                f"Запит виконано за {format_time(query_duration)}. Отримано {row_count} рядків даних."
-            )
-            print_success(
-                f"Дані експортовано у файл: {Fore.WHITE}{str(xlsx_path)} {Fore.YELLOW}(рядків: {row_count})"
-            )
-            cursor.close()
-            if export_format == "BOTH":
-                csv_path = year_dir / f"{year_num}-{week_num:02d}.csv"
-                cursor = connection.cursor()
-                cursor.execute(query)
-                export_csv_stream(
-                    cursor, csv_path,
-                    csv_config.delimiter, csv_config.encoding, csv_config.quoting,
-                )
-                cursor.close()
-                print_success(
-                    f"Дані додатково експортовано у файл: {Fore.WHITE}{str(csv_path)}"
-                )
-            return str(xlsx_path)
+            xlsx_writer = XlsxStreamWriter(xlsx_path, f"{year_num}-{week_num:02d}", excel_header, xlsx_config)
+            exported_files.append(str(xlsx_path))
 
-        if (export_format == "CSV" or force_csv_only) and not sink_only:
+        if needs_csv:
             csv_path = year_dir / f"{year_num}-{week_num:02d}.csv"
-            row_count = export_csv_stream(
-                cursor, csv_path,
-                csv_config.delimiter, csv_config.encoding, csv_config.quoting,
-            )
-            progress.animation_running = False
-            spinner_thread.join(timeout=1.0)
-            query_duration = _time.time() - query_start_time
-            print_success(
-                f"Запит виконано за {format_time(query_duration)}. Отримано {row_count} рядків даних."
-            )
-            print_success(
-                f"Дані експортовано у файл: {Fore.WHITE}{str(csv_path)} {Fore.YELLOW}(рядків: {row_count})"
-            )
-            cursor.close()
-            return str(csv_path)
+            csv_writer = CsvStreamWriter(csv_path, csv_config.delimiter, csv_config.encoding, csv_config.quoting)
+            exported_files.append(str(csv_path))
 
-        # DataFrame-based export
-        rows = cursor.fetchall()
-        progress.animation_running = False
-        spinner_thread.join(timeout=1.0)
-        columns = [desc[0] for desc in cursor.description]
-        query_duration = _time.time() - query_start_time
-        print_success(
-            f"Запит виконано за {format_time(query_duration)}. Отримано {len(rows)} рядків даних."
-        )
-        cursor.close()
+        raw_columns = [desc[0] for desc in cursor.description]
 
-        converted_rows = []
-        for row in rows:
-            converted_row = [convert_dotnet_to_python(value) for value in row]
-            converted_rows.append(converted_row)
-
-        df = pd.DataFrame(converted_rows, columns=columns)
-        if len(df) == 0:
-            print_warning(f"Запит не повернув даних для періоду {reporting_period}")
-            return []
-
-        print_progress("Обробка результатів запиту...")
         pattern = re.compile(r"(\w+)\[([^\]]+)\]")
-        renamed_columns = {}
         potential_names = {}
-        for col in df.columns:
+        for col in raw_columns:
             m = pattern.match(col)
             column_name = m.group(2) if m else col.strip("[]")
-            potential_names[column_name] = (
-                False if column_name in potential_names else True
-            )
-        for col in df.columns:
+            potential_names[column_name] = False if column_name in potential_names else True
+
+        renamed_columns = []
+        duplicate_columns = []
+        for col in raw_columns:
             m = pattern.match(col)
             if m:
                 column_name = m.group(2)
-                if potential_names[column_name]:
-                    renamed_columns[col] = column_name
+                if potential_names.get(column_name, True):
+                    renamed_columns.append(column_name)
+                else:
+                    renamed_columns.append(col)
+                    duplicate_columns.append(col)
             else:
-                renamed_columns[col] = col.strip("[]")
+                renamed_columns.append(col.strip("[]"))
 
-        duplicate_columns = []
-        for col in df.columns:
-            m = pattern.match(col)
-            if not m:
-                continue
-            key = m.group(2)
-            if key in potential_names and not potential_names[key]:
-                duplicate_columns.append(col)
         if duplicate_columns:
-            print_warning(
-                "Деякі стовпці не були перейменовані через потенційне дублювання:"
-            )
+            print_warning("Деякі стовпці не були перейменовані через потенційне дублювання:")
             for col in duplicate_columns:
                 match = re.match(r"(\w+)\[([^\]]+)\]", col)
                 if match:
@@ -294,69 +236,74 @@ def run_dax_query(
         else:
             print_info("Усі стовпці успішно перейменовано")
 
-        df.rename(columns=renamed_columns, inplace=True)
+        progress.animation_running = False
+        spinner_thread.join(timeout=1.0)
+        query_duration = _time.time() - query_start_time
+        print_success(f"Запит виконано за {format_time(query_duration)}.")
 
-        if export_format not in ["XLSX", "CSV", "BOTH", "CH", "CLICKHOUSE", "DUCK", "DUCKDB", "PG", "POSTGRESQL"]:
-            print_warning(
-                f"Невідомий формат експорту: {export_format}. Використовуємо XLSX."
-            )
-            export_format = "XLSX"
-        export_xlsx_flag = export_format in ["XLSX", "BOTH"] and not sink_only
-        export_csv_flag = export_format in ["CSV", "BOTH"] and not sink_only
-        exported_files = []
-        if export_xlsx_flag and not force_csv_only:
-            xlsx_path = year_dir / f"{year_num}-{week_num:02d}.xlsx"
-            xlsx_size = export_xlsx_dataframe(
-                df, xlsx_path, f"{year_num}-{week_num:02d}",
-                excel_header, xlsx_config,
-            )
-            exported_files.append((str(xlsx_path), xlsx_size))
-        if export_csv_flag or force_csv_only:
-            csv_path = year_dir / f"{year_num}-{week_num:02d}.csv"
-            df_replaced = df.replace([math.inf, -math.inf], None)
-            quoting_mode = csv_config.quoting.lower()
-            df_replaced.to_csv(
-                str(csv_path),
-                sep=csv_config.delimiter,
-                encoding=csv_config.encoding,
-                index=False,
-                quoting=(
-                    csv.QUOTE_MINIMAL
-                    if quoting_mode == "minimal"
-                    else (
-                        csv.QUOTE_ALL if quoting_mode == "all" else csv.QUOTE_NONNUMERIC
-                    )
-                ),
-                na_rep="",
-            )
-            exported_files.append((str(csv_path), Path(csv_path).stat().st_size))
+        chunk_size = 50000
+        total_rows = 0
+        is_first_chunk = True
 
-        for filepath, file_size_bytes in exported_files:
+        print_progress("Експорт/збереження отриманих даних (потоковий режим)...")
+        while True:
+            chunk = cursor.fetchmany(chunk_size)
+            if not chunk:
+                break
+            
+            converted_chunk = []
+            for row in chunk:
+                converted_chunk.append([convert_dotnet_to_python(v) for v in row])
+                
+            df_chunk = pd.DataFrame(converted_chunk, columns=renamed_columns)
+            
+            if xlsx_writer:
+                xlsx_writer.write_chunk(df_chunk)
+            if csv_writer:
+                csv_writer.write_chunk(df_chunk)
+
+            if sinks:
+                from ..sinks import sanitize_df as _sanitize
+                df_for_sinks = _sanitize(df_chunk)
+                df_for_sinks["year_num"] = year_num
+                df_for_sinks["week_num"] = week_num
+                
+                for sink in sinks:
+                    try:
+                        if is_first_chunk:
+                            sink.setup(df_for_sinks)
+                            sink.delete_period(year_num, week_num)
+                        sink.insert(df_for_sinks, year=year_num, week=week_num)
+                    except Exception as e:
+                        print_error(f"Помилка sink {type(sink).__name__}: {e}")
+
+            total_rows += len(df_chunk)
+            is_first_chunk = False
+
+        for filepath in exported_files:
+            file_size_bytes = 0
+            if xlsx_writer and filepath == xlsx_writer.file_path_str:
+                _, file_size_bytes = xlsx_writer.close()
+            elif csv_writer and filepath == str(csv_writer.file_path):
+                csv_writer.close()
+                file_size_bytes = Path(filepath).stat().st_size
+
             if file_size_bytes < 1024 * 1024:
                 file_size = f"{file_size_bytes / 1024:.1f} КБ"
             else:
                 file_size = f"{file_size_bytes / (1024 * 1024):.2f} МБ"
             print_success(
-                f"Дані експортовано у файл: {Fore.WHITE}{filepath} {Fore.YELLOW}({file_size}, {len(df)} рядків)"
+                f"Дані експортовано у файл: {Fore.WHITE}{filepath} {Fore.YELLOW}({file_size}, {total_rows} рядків)"
             )
 
-        # Analytics sinks (ClickHouse, DuckDB, тощо)
-        if sinks:
-            from ..sinks import sanitize_df as _sanitize
-            df_for_sinks = _sanitize(df)
-            df_for_sinks["year_num"] = year_num
-            df_for_sinks["week_num"] = week_num
-            for sink in sinks:
-                try:
-                    sink.setup(df_for_sinks)
-                    sink.delete_period(year_num, week_num)
-                    sink.insert(df_for_sinks, year=year_num, week=week_num)
-                except Exception as e:
-                    print_error(f"Помилка sink {type(sink).__name__}: {e}")
+        if total_rows == 0:
+            print_warning(f"Запит не повернув даних для періоду {reporting_period}")
+            return []
 
         if sink_only:
             return None
-        return exported_files[0][0] if exported_files else None
+            
+        return exported_files[0] if exported_files else None
     except Exception as e:
         print_error(f"Помилка при виконанні запиту: {e}")
         return None
