@@ -51,7 +51,7 @@ COMPRESS_OPTIONS = [
 class OlapExportScreen(Screen):
     """Екран: Експорт з OLAP куба."""
 
-    BINDINGS = [("escape", "pop_screen", "Назад")]
+    BINDINGS = [("escape", "app.pop_screen", "Назад")]
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)

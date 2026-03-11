@@ -16,7 +16,7 @@ from olap_tool.core.utils import TUIStream
 class XlsxImportScreen(Screen):
     """Екран: Імпорт XLSX в аналітику."""
 
-    BINDINGS = [("escape", "pop_screen", "Назад")]
+    BINDINGS = [("escape", "app.pop_screen", "Назад")]
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
