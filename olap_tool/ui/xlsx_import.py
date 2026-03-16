@@ -8,10 +8,7 @@ from pathlib import Path
 from InquirerPy import inquirer
 from InquirerPy.base.control import Choice
 from prompt_toolkit.validation import ValidationError, Validator
-from rich.console import Console
-from rich.table import Table
-
-console = Console()
+from . import console, show_summary
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -59,17 +56,6 @@ TARGET_CHOICES = [
     Choice(value="duck", name="DuckDB"),
     Choice(value="pg",   name="PostgreSQL"),
 ]
-
-
-def _show_summary(params: dict[str, str]) -> None:
-    table = Table(show_header=False, border_style="cyan", box=None, padding=(0, 1))
-    table.add_column(style="dim cyan", no_wrap=True)
-    table.add_column(style="white")
-    for key, value in params.items():
-        table.add_row(key, value)
-    console.print()
-    console.print(table)
-    console.print()
 
 
 # ─── Wizard ──────────────────────────────────────────────────────────────────
@@ -137,7 +123,7 @@ def run_wizard() -> None:
         "Workers":    workers,
         "Dry Run":    "так" if dry_run else "ні",
     }
-    _show_summary(summary)
+    show_summary(summary)
 
     # 8. Підтвердження
     confirmed: bool = inquirer.confirm(

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Optional
 
 import pandas as pd
 
-from .base import AnalyticsSink, sanitize_df, _safe_column_name  # noqa: F401
+from .base import AnalyticsSink, sanitize_df
 
 if TYPE_CHECKING:
     from ..core.config import ClickHouseConfig

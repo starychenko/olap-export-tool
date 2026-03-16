@@ -1,7 +1,5 @@
 import datetime
 import re
-import csv
-import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -177,10 +175,9 @@ def run_dax_query(
     try:
         cursor = connection.cursor()
         cursor.execute(query)
-        estimated_query_time = query_config.timeout
         spinner_thread = threading.Thread(
             target=progress.loading_spinner,
-            args=("Отримання даних з OLAP кубу", estimated_query_time),
+            args=("Отримання даних з OLAP кубу",),
         )
         spinner_thread.start()
 

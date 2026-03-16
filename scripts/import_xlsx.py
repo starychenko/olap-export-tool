@@ -14,12 +14,12 @@
 """
 
 import sys
-import os
 import argparse
 import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import fields as dc_fields
 from pathlib import Path
 from typing import Optional
 
@@ -391,7 +391,6 @@ def main() -> int:
             if target == "clickhouse":
                 from olap_tool.sinks import ClickHouseSink, sanitize_df
                 from olap_tool.core.config import ClickHouseConfig
-                from dataclasses import fields as dc_fields
 
                 # Зберігаємо cfg як dict для передачі у thread-local фабрику
                 _ch_cfg_kwargs = {
@@ -425,7 +424,6 @@ def main() -> int:
             else:  # postgresql
                 from olap_tool.sinks import PostgreSQLSink, sanitize_df
                 from olap_tool.core.config import PostgreSQLConfig
-                from dataclasses import fields as dc_fields
 
                 if not isinstance(cfg, PostgreSQLConfig):
                     raise TypeError(f"Очікувався PostgreSQLConfig, отримано {type(cfg).__name__}")

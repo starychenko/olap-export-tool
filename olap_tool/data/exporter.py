@@ -2,7 +2,7 @@ import csv
 import math
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Tuple
+from typing import TYPE_CHECKING
 
 import pandas as pd
 import xlsxwriter  # type: ignore

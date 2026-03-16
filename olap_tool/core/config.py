@@ -29,9 +29,6 @@ class SecretsConfig:
     database: str = ""
     auth_method: str = "SSPI"
     domain: str = ""
-    port: str = ""
-    http_url: str = ""
-    timeout: str = ""
     credentials_encrypted: bool = True
     credentials_file: str = ".credentials"
     use_master_password: bool = False
@@ -161,9 +158,6 @@ def load_secrets_from_env() -> SecretsConfig:
         database=os.getenv("OLAP_DATABASE", ""),
         auth_method=os.getenv("OLAP_AUTH_METHOD", "SSPI").upper(),
         domain=os.getenv("OLAP_DOMAIN", ""),
-        port=os.getenv("OLAP_PORT", ""),
-        http_url=os.getenv("OLAP_HTTP_URL", ""),
-        timeout=os.getenv("OLAP_TIMEOUT", ""),
         credentials_encrypted=_parse_bool(os.getenv("OLAP_CREDENTIALS_ENCRYPTED", "true"), True),
         credentials_file=os.getenv("OLAP_CREDENTIALS_FILE", ".credentials"),
         use_master_password=_parse_bool(os.getenv("OLAP_USE_MASTER_PASSWORD", "false"), False),

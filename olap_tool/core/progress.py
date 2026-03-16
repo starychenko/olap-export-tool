@@ -149,7 +149,7 @@ class TimeTracker:
         return info
 
 
-def loading_spinner(description: str, estimated_time: float | None = None):
+def loading_spinner(description: str):
     animation_stop_event.clear()
     spinner = itertools.cycle(SPINNER_FRAMES)
     start_time = time.time()

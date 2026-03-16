@@ -8,10 +8,7 @@ from InquirerPy import inquirer
 from InquirerPy.base.control import Choice
 from InquirerPy.separator import Separator
 from prompt_toolkit.validation import ValidationError, Validator
-from rich.console import Console
-from rich.table import Table
-
-console = Console()
+from . import console, show_summary
 
 
 # ─── Validators ──────────────────────────────────────────────────────────────
@@ -48,17 +45,6 @@ def _list_profiles() -> list[Choice]:
         for p in sorted(profiles_dir.glob("*.yaml")):
             choices.append(Choice(value=p.stem, name=p.stem))
     return choices
-
-
-def _show_summary(params: dict[str, str]) -> None:
-    table = Table(show_header=False, border_style="cyan", box=None, padding=(0, 1))
-    table.add_column(style="dim cyan", no_wrap=True)
-    table.add_column(style="white")
-    for key, value in params.items():
-        table.add_row(key, value)
-    console.print()
-    console.print(table)
-    console.print()
 
 
 # ─── Wizard ──────────────────────────────────────────────────────────────────
@@ -156,7 +142,7 @@ def run_wizard() -> None:
         "Період":    period_label,
         "Стиснення": compress,
     }
-    _show_summary(summary)
+    show_summary(summary)
 
     # 7. Підтвердження
     confirmed: bool = inquirer.confirm(
