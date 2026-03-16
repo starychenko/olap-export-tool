@@ -93,7 +93,6 @@ def run_dax_query(
 
     from .exporter import CsvStreamWriter, XlsxStreamWriter
     from ..core.utils import print_info_detail
-    from colorama import Fore
 
     print_info_detail("Формування DAX запиту з параметрами:", {
         "Рік": str(year_num),
@@ -303,7 +302,7 @@ def run_dax_query(
 
             file_size = format_file_size(file_size_bytes)
             print_success(
-                f"Дані експортовано у файл: {Fore.WHITE}{filepath} {Fore.YELLOW}({file_size}, {total_rows} рядків)"
+                f"Дані експортовано у файл: {filepath} ({file_size}, {total_rows} рядків)"
             )
 
         if total_rows == 0:

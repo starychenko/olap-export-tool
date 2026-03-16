@@ -1,9 +1,13 @@
 import datetime
-from colorama import init, Fore, Style
 
+from rich.console import Console
+from rich.table import Table
 
-init(autoreset=True)
+# colorama потрібен для progress.py (spinner/countdown з \r overwrite)
+from colorama import init as _colorama_init
+_colorama_init(autoreset=True)
 
+_console = Console(highlight=False)
 
 # Набір символів для логів — налаштовується через init_utils()
 _ascii_logs = False
@@ -53,57 +57,82 @@ def get_current_time():
 
 
 def print_header(text: str):
-    print(f"\n{Fore.CYAN}{Style.BRIGHT}{'=' * 80}")
-    print(f"{Fore.CYAN}{Style.BRIGHT}== {text}")
-    print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 80}")
-    print()
+    _console.print()
+    _console.rule(f"[bold]{text}[/bold]", style="cyan")
+    _console.print()
 
 
 def print_info_detail(text: str, details: dict | None = None):
-    print(f"{Fore.GREEN}[{get_current_time()}] {ICON_INFO}  {text}")
+    _console.print(
+        f"[dim]\\[{get_current_time()}][/dim] [green]{ICON_INFO}  {text}[/green]"
+    )
     if details:
+        table = Table(
+            show_header=False, box=None, padding=(0, 1), pad_edge=False,
+        )
+        table.add_column(style="dim cyan", no_wrap=True, min_width=3)
+        table.add_column(style="white")
         for key, value in details.items():
             if "password" in key.lower() or "пароль" in key.lower():
                 value = "********"
-            print(f"   {Fore.CYAN}{key}: {Fore.WHITE}{value}")
+            table.add_row(f"   {key}:", str(value))
+        _console.print(table)
 
 
 def print_tech_error(text: str, error_obj: Exception | None = None):
-    print(f"{Fore.RED}[{get_current_time()}] {ICON_STOP} {text}")
+    _console.print(
+        f"[dim]\\[{get_current_time()}][/dim] [red]{ICON_STOP} {text}[/red]"
+    )
     if error_obj:
         error_type = type(error_obj).__name__
         error_message = str(error_obj)
-        print(f"   {Fore.RED}Тип помилки: {Fore.WHITE}{error_type}")
-        print(f"   {Fore.RED}Повідомлення: {Fore.WHITE}{error_message}")
+        table = Table(
+            show_header=False, box=None, padding=(0, 1), pad_edge=False,
+        )
+        table.add_column(style="red", no_wrap=True, min_width=3)
+        table.add_column(style="white")
+        table.add_row("   Тип помилки:", error_type)
+        table.add_row("   Повідомлення:", error_message)
+        _console.print(table)
         if hasattr(error_obj, "__traceback__") and error_obj.__traceback__:
             import traceback
 
             tb_lines = traceback.format_tb(error_obj.__traceback__)
             if len(tb_lines) > 3:
                 tb_lines = tb_lines[-3:]
-            print(f"   {Fore.RED}Стек викликів:")
+            _console.print("   [red]Стек викликів:[/red]")
             for line in tb_lines:
-                print(f"   {Fore.YELLOW}{line.strip()}")
+                _console.print(f"   [yellow]{line.strip()}[/yellow]")
 
 
 def print_info(text: str):
-    print(f"{Fore.GREEN}[{get_current_time()}] {ICON_INFO}  {text}")
+    _console.print(
+        f"[dim]\\[{get_current_time()}][/dim] [green]{ICON_INFO}  {text}[/green]"
+    )
 
 
 def print_warning(text: str):
-    print(f"{Fore.YELLOW}[{get_current_time()}] {ICON_WARN}  {text}")
+    _console.print(
+        f"[dim]\\[{get_current_time()}][/dim] [yellow]{ICON_WARN}  {text}[/yellow]"
+    )
 
 
 def print_error(text: str):
-    print(f"{Fore.RED}[{get_current_time()}] {ICON_ERR} {text}")
+    _console.print(
+        f"[dim]\\[{get_current_time()}][/dim] [red]{ICON_ERR} {text}[/red]"
+    )
 
 
 def print_success(text: str):
-    print(f"{Fore.GREEN}[{get_current_time()}] {ICON_OK} {text}")
+    _console.print(
+        f"[dim]\\[{get_current_time()}][/dim] [green]{ICON_OK} {text}[/green]"
+    )
 
 
 def print_progress(text: str):
-    print(f"{Fore.BLUE}[{get_current_time()}] {ICON_PROGRESS} {text}")
+    _console.print(
+        f"[dim]\\[{get_current_time()}][/dim] [blue]{ICON_PROGRESS} {text}[/blue]"
+    )
 
 
 def format_file_size(size_bytes: int) -> str:
@@ -140,7 +169,6 @@ def convert_dotnet_to_python(value):
         return None
     if System is not None:
         if isinstance(value, System.DateTime):
-            # Повертаємо Excel-серійний номер (int) — як зберігалось раніше
             epoch = datetime.date(1899, 12, 30)
             d = datetime.date(value.Year, value.Month, value.Day)
             return (d - epoch).days
@@ -156,7 +184,6 @@ def convert_dotnet_to_python(value):
             return str(value)
         if isinstance(value, System.Boolean):
             return bool(value)
-    # Невідомий .NET тип — конвертуємо в str, щоб xlsxwriter не падав
     try:
         return str(value)
     except Exception:
