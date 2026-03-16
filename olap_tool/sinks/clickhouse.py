@@ -104,7 +104,8 @@ def _coerce_col_to_ch_type(series: pd.Series, ch_type: str) -> pd.Series:
         # Векторизована конвертація: astype(str) → виправляємо NaN-позиції → object
         null_mask = series.isna()
         result = series.astype(str).astype(object)
-        result[null_mask] = None
+        # Nullable(String) → None дозволений; String → заміна на ""
+        result[null_mask] = None if "Nullable" in ch_type else ""
         return result
     if "DateTime" in ch_type or "Date" in ch_type:
         return pd.to_datetime(series, errors="coerce")
