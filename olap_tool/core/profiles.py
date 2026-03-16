@@ -145,35 +145,29 @@ def print_profiles_list() -> None:
         return
 
     print_info(f"Доступні профілі ({len(profiles)}):")
-    print()
+
+    from .utils import print_info_detail
 
     for profile_name in profiles:
         profile_data = load_profile(profile_name)
         if profile_data:
             description = profile_data.get("description", "Без опису")
-            print(f"  • {profile_name}")
-            print(f"    {description}")
+            details = {"Опис": description}
 
-            # Період
             if "period" in profile_data:
                 period_cfg = profile_data["period"]
                 period_type = period_cfg.get("type", "manual")
-
                 if period_type == "auto":
                     auto_type = period_cfg.get("auto_type")
                     auto_value = period_cfg.get("auto_value")
-                    if auto_value:
-                        print(f"    Період: {auto_type} ({auto_value})")
-                    else:
-                        print(f"    Період: {auto_type}")
+                    details["Період"] = f"{auto_type} ({auto_value})" if auto_value else str(auto_type)
                 else:
                     start = period_cfg.get("start")
                     end = period_cfg.get("end")
-                    print(f"    Період: {start} - {end}")
+                    details["Період"] = f"{start} - {end}"
 
-            # Формат експорту
             export_fmt = profile_data.get("export", {}).get("format", "xlsx")
             compress = profile_data.get("export", {}).get("compress", "none")
-            print(f"    Формат: {export_fmt.upper()}, Стиснення: {compress}")
+            details["Формат"] = f"{export_fmt.upper()}, Стиснення: {compress}"
 
-            print()
+            print_info_detail(f"  {profile_name}", details)

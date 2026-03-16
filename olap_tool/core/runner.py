@@ -321,6 +321,10 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print_warning("Не було створено жодного файлу")
 
+        if zip_file_path:
+            zip_size = format_file_size(Path(zip_file_path).stat().st_size)
+            print_success(f"ZIP архів: {zip_file_path} ({zip_size})")
+
     finally:
         for sink in sinks:
             try:

@@ -162,11 +162,9 @@ def loading_spinner(description: str):
         sys.stdout.write(message)
         sys.stdout.flush()
         animation_stop_event.wait(0.1)
-    # Don't print empty clears in TUI mode to avoid status bar stutter
-    if not hasattr(sys.stdout, "_app"):
-        sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+    sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
+    sys.stdout.write("\n")
+    sys.stdout.flush()
 
 
 def streaming_spinner(
@@ -192,10 +190,7 @@ def streaming_spinner(
         sys.stdout.flush()
         last_message = message
         time.sleep(interval_s)
-    if hasattr(sys.stdout, "_app"):
-        sys.stdout.write(f"\r{Fore.BLUE}[{get_current_time()}] {COUNTDOWN_ICON} Завершено: {rows_fn()} рядків\n")
-    else:
-        sys.stdout.write("\r" + " " * (len(last_message) + 2) + "\r")
+    sys.stdout.write("\r" + " " * (len(last_message) + 2) + "\r")
     sys.stdout.flush()
 
 

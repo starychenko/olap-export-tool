@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from InquirerPy import inquirer
 from InquirerPy.base.control import Choice
@@ -47,6 +48,47 @@ def _list_profiles() -> list[Choice]:
     return choices
 
 
+def _load_profile_defaults(profile_name: str) -> dict[str, Any]:
+    """Читає профіль і повертає defaults для wizard (format, period_type, period_value, compress)."""
+    defaults: dict[str, Any] = {}
+    if not profile_name:
+        return defaults
+
+    from olap_tool.core.profiles import load_profile
+    profile_data = load_profile(profile_name)
+    if not profile_data:
+        return defaults
+
+    # format
+    fmt = profile_data.get("export", {}).get("format")
+    if fmt:
+        defaults["format"] = fmt
+
+    # compress
+    compress = profile_data.get("export", {}).get("compress")
+    if compress:
+        defaults["compress"] = compress
+
+    # period
+    period_cfg = profile_data.get("period", {})
+    period_type = period_cfg.get("type")
+    if period_type == "auto":
+        auto_type = period_cfg.get("auto_type")
+        auto_value = period_cfg.get("auto_value")
+        if auto_type:
+            defaults["period_type"] = auto_type
+        if auto_value is not None:
+            defaults["period_value"] = str(auto_value)
+    elif period_type == "manual":
+        start = period_cfg.get("start", "")
+        end = period_cfg.get("end", "")
+        if start and end:
+            defaults["period_type"] = "manual"
+            defaults["period_value"] = f"{start}:{end}"
+
+    return defaults
+
+
 # ─── Wizard ──────────────────────────────────────────────────────────────────
 
 FORMAT_CHOICES = [
@@ -59,6 +101,8 @@ FORMAT_CHOICES = [
     Choice(value="pg",         name="PostgreSQL"),
 ]
 
+_FORMAT_VALUES = [c.value for c in FORMAT_CHOICES if isinstance(c, Choice)]
+
 PERIOD_CHOICES = [
     Choice(value="last-weeks",       name="Останні N тижнів"),
     Choice(value="current-month",    name="Поточний місяць"),
@@ -68,6 +112,8 @@ PERIOD_CHOICES = [
     Choice(value="year-to-date",     name="З початку року"),
     Choice(value="manual",           name="Ручний діапазон YYYY-WW:YYYY-WW"),
 ]
+
+_PERIOD_VALUES = [c.value for c in PERIOD_CHOICES if isinstance(c, Choice)]
 
 COMPRESS_CHOICES = [
     Choice(value="none", name="Без стиснення"),
@@ -97,39 +143,54 @@ def run_wizard() -> None:
         max_height="40%",
     ).execute()
 
-    # 2. Формат
+    # Читаємо defaults з профілю для pre-populate наступних кроків
+    p_defaults = _load_profile_defaults(profile)
+
+    # 2. Формат (default з профілю або xlsx)
+    fmt_default = p_defaults.get("format", "xlsx")
+    if fmt_default not in _FORMAT_VALUES:
+        fmt_default = "xlsx"
     fmt: str = inquirer.select(
         message="Формат виводу:",
         choices=FORMAT_CHOICES,
-        default="xlsx",
+        default=fmt_default,
     ).execute()
 
-    # 3. Тип періоду
+    # 3. Тип періоду (default з профілю або last-weeks)
+    period_default = p_defaults.get("period_type", "last-weeks")
+    if period_default not in _PERIOD_VALUES:
+        period_default = "last-weeks"
     period_type: str = inquirer.select(
         message="Тип періоду:",
         choices=PERIOD_CHOICES,
-        default="last-weeks",
+        default=period_default,
     ).execute()
 
     # 4. Значення (тільки для last-weeks і manual)
     period_value: str = ""
     if period_type == "last-weeks":
+        weeks_default = p_defaults.get("period_value", "4") if period_type == p_defaults.get("period_type") else "4"
         period_value = inquirer.text(
             message="Кількість тижнів:",
-            default="4",
+            default=weeks_default,
             validate=WeeksValidator(),
         ).execute()
     elif period_type == "manual":
+        manual_default = p_defaults.get("period_value", "") if period_type == p_defaults.get("period_type") else ""
         period_value = inquirer.text(
             message="Діапазон (YYYY-WW:YYYY-WW):",
+            default=manual_default,
             validate=ManualPeriodValidator(),
         ).execute()
 
-    # 5. Стиснення
+    # 5. Стиснення (default з профілю або none)
+    compress_default = p_defaults.get("compress", "none")
+    if compress_default not in ("none", "zip"):
+        compress_default = "none"
     compress: str = inquirer.select(
         message="Стиснення:",
         choices=COMPRESS_CHOICES,
-        default="none",
+        default=compress_default,
     ).execute()
 
     # 6. Підсумок
