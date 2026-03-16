@@ -130,11 +130,12 @@ class DuckDBSink(AnalyticsSink):
     Ідемпотентність: DELETE WHERE year_num=X AND week_num=Y → batch INSERT.
     """
 
-    def __init__(self, config: "DuckDBConfig"):
+    def __init__(self, config: "DuckDBConfig", *, silent: bool = False):
         self._config = config
         self._session = self._make_session()
         self._schema: dict[str, str] | None = None
         self._schema_lock = threading.Lock()
+        self._silent = silent
 
     def _make_session(self):
         import requests
@@ -165,7 +166,8 @@ class DuckDBSink(AnalyticsSink):
 
     def setup(self, df: pd.DataFrame) -> None:
         from ..core.utils import print_progress, print_warning
-        print_progress(f"Перевірка таблиці DuckDB `{self._config.table}`...")
+        if not self._silent:
+            print_progress(f"Перевірка таблиці DuckDB `{self._config.table}`...")
         cols_ddl = ", ".join(
             f'"{col}" {_pandas_dtype_to_duck(df[col].dtype)}'
             for col in df.columns

@@ -79,9 +79,10 @@ class ThreadLocalSinkPool:
     setup() ідемпотентний (CREATE TABLE IF NOT EXISTS).
     """
 
-    def __init__(self, sink_class, config_class):
+    def __init__(self, sink_class, config_class, sink_kwargs: dict | None = None):
         self._sink_class = sink_class
         self._config_class = config_class
+        self._sink_kwargs = sink_kwargs or {}
         self._local = threading.local()
         self._all_sinks: list = []
         self._lock = threading.Lock()
@@ -93,7 +94,7 @@ class ThreadLocalSinkPool:
     def get_sink(self, cfg_kwargs: dict):
         """Повертає thread-local sink, створює новий якщо потрібно."""
         if not hasattr(self._local, "sink") or self._local.sink is None:
-            sink = self._sink_class(self._config_class(**cfg_kwargs))
+            sink = self._sink_class(self._config_class(**cfg_kwargs), **self._sink_kwargs)
             if self._setup_df is not None:
                 sink.setup(self._setup_df)
             self._local.sink = sink
@@ -327,9 +328,9 @@ def main() -> int:
                 from olap_tool.sinks import ClickHouseSink
                 from olap_tool.core.config import ClickHouseConfig
                 cfg_kwargs = {f.name: getattr(cfg, f.name) for f in dc_fields(cfg)}
-                sink_pool = ThreadLocalSinkPool(ClickHouseSink, ClickHouseConfig)
+                sink_pool = ThreadLocalSinkPool(ClickHouseSink, ClickHouseConfig, sink_kwargs={"silent": True})
                 # Ініціалізаційний setup через тимчасовий sink
-                init_sink = ClickHouseSink(ClickHouseConfig(**cfg_kwargs))
+                init_sink = ClickHouseSink(ClickHouseConfig(**cfg_kwargs), silent=True)
                 if df_init_clean is not None:
                     init_sink.setup(df_init_clean)
                     sink_pool.set_setup_df(df_init_clean)
@@ -340,7 +341,7 @@ def main() -> int:
                 from olap_tool.core.config import DuckDBConfig
                 if not isinstance(cfg, DuckDBConfig):
                     raise TypeError(f"Очікувався DuckDBConfig, отримано {type(cfg).__name__}")
-                sink = DuckDBSink(cfg)
+                sink = DuckDBSink(cfg, silent=True)
                 if df_init_clean is not None:
                     sink.setup(df_init_clean)
 
@@ -350,8 +351,8 @@ def main() -> int:
                 if not isinstance(cfg, PostgreSQLConfig):
                     raise TypeError(f"Очікувався PostgreSQLConfig, отримано {type(cfg).__name__}")
                 cfg_kwargs = {f.name: getattr(cfg, f.name) for f in dc_fields(cfg)}
-                sink_pool = ThreadLocalSinkPool(PostgreSQLSink, PostgreSQLConfig)
-                init_sink = PostgreSQLSink(cfg)
+                sink_pool = ThreadLocalSinkPool(PostgreSQLSink, PostgreSQLConfig, sink_kwargs={"silent": True})
+                init_sink = PostgreSQLSink(cfg, silent=True)
                 if df_init_clean is not None:
                     init_sink.setup(df_init_clean)
                     sink_pool.set_setup_df(df_init_clean)

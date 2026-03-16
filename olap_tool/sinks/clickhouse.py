@@ -309,18 +309,20 @@ class ClickHouseSink(AnalyticsSink):
     Підтримує batch-режим: якщо client передано ззовні — не закриває з'єднання.
     """
 
-    def __init__(self, config: "ClickHouseConfig", client=None):
+    def __init__(self, config: "ClickHouseConfig", client=None, *, silent: bool = False):
         self._config = config
         self._client = client          # зовнішній клієнт (batch-режим)
         self._own_client = client is None
         self._schema: dict | None = None
+        self._silent = silent
 
     def setup(self, df: pd.DataFrame) -> None:
         from ..core.utils import print_progress
         if self._own_client:
-            print_progress(
-                f"Підключення до ClickHouse ({self._config.host}:{self._config.port})..."
-            )
+            if not self._silent:
+                print_progress(
+                    f"Підключення до ClickHouse ({self._config.host}:{self._config.port})..."
+                )
             self._client = create_client(self._config)
         ensure_database(self._client, self._config.database)
         ensure_table(self._client, self._config.database, self._config.table, df)
@@ -344,6 +346,7 @@ class ClickHouseSink(AnalyticsSink):
             year=year, week=week,
             client=self._client,
             schema=self._schema,
+            silent=self._silent,
         )
 
     def close(self) -> None:

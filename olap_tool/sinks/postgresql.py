@@ -56,11 +56,12 @@ class PostgreSQLSink(AnalyticsSink):
     потоками. Для batch-скриптів з threading створюйте окремий екземпляр на кожен потік.
     """
 
-    def __init__(self, config: "PostgreSQLConfig"):
+    def __init__(self, config: "PostgreSQLConfig", *, silent: bool = False):
         self._config = config
         self._conn = None
         self._schema: dict[str, str] | None = None
         self._schema_lock = threading.Lock()
+        self._silent = silent
 
     def _get_conn(self):
         """Повертає активне з'єднання, створює нове якщо потрібно."""
@@ -100,10 +101,11 @@ class PostgreSQLSink(AnalyticsSink):
 
     def setup(self, df: pd.DataFrame) -> None:
         from ..core.utils import print_progress, print_warning
-        print_progress(
-            f"Перевірка таблиці PostgreSQL {self._full_table()} "
-            f"({self._config.host}:{self._config.port})..."
-        )
+        if not self._silent:
+            print_progress(
+                f"Перевірка таблиці PostgreSQL {self._full_table()} "
+                f"({self._config.host}:{self._config.port})..."
+            )
         conn = self._get_conn()
         cols_ddl = ", ".join(
             f'"{col}" {_pandas_dtype_to_pg(df[col].dtype)}'
