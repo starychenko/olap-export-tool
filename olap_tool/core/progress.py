@@ -161,8 +161,8 @@ def loading_spinner(description: str):
         sys.stdout.write(message)
         sys.stdout.flush()
         animation_stop_event.wait(0.1)
+    # Повністю очищаємо рядок спінера (без \n — наступний print сам додасть)
     sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
-    sys.stdout.write("\n")
     sys.stdout.flush()
 
 

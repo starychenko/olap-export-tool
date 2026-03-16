@@ -92,13 +92,6 @@ def run_dax_query(
     ensure_dir(year_dir)
 
     from .exporter import CsvStreamWriter, XlsxStreamWriter
-    from ..core.utils import print_info_detail
-
-    print_info_detail("Формування DAX запиту з параметрами:", {
-        "Рік": str(year_num),
-        "Тиждень": str(week_num),
-        "Фільтр": str(filter_fg1_name),
-    })
 
     query = f"""
     /* START QUERY BUILDER */
@@ -225,14 +218,13 @@ def run_dax_query(
             else:
                 renamed_columns.append(col.strip("[]"))
 
-        if duplicate_columns:
+        if duplicate_columns and not getattr(run_dax_query, "_dup_warned", False):
             print_warning("Деякі стовпці не були перейменовані через потенційне дублювання:")
             for col in duplicate_columns:
                 match = re.match(r"(\w+)\[([^\]]+)\]", col)
                 if match:
                     print_warning(f"  • {col} (конфлікт імені: {match.group(2)})")
-        else:
-            print_info("Усі стовпці успішно перейменовано")
+            run_dax_query._dup_warned = True  # type: ignore[attr-defined]
 
         progress.animation_stop_event.set()
         spinner_thread.join(timeout=1.0)

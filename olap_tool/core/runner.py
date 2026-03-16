@@ -7,6 +7,7 @@ from .utils import (
     print_warning,
     print_error,
     print_success,
+    print_progress,
     format_time,
     format_file_size,
     ensure_dir,
@@ -205,8 +206,6 @@ def main(argv: list[str] | None = None) -> int:
 
         query_timeout = config.query.timeout
 
-        print_header("OLAP ЕКСПОРТ ДАНИХ - ПОЧАТОК РОБОТИ")
-
         auth_method = config.secrets.auth_method.upper()
         if auth_method == AUTH_SSPI:
             auth_label = f"Windows (SSPI) як користувач {get_current_windows_user()}"
@@ -256,16 +255,20 @@ def main(argv: list[str] | None = None) -> int:
         time_tracker = TimeTracker(len(year_week_pairs), query_timeout=query_timeout, debug=config.display.debug)
         for i, (year, week) in enumerate(year_week_pairs):
             if i > 0:
-                print_info(f"{'─' * 40}")
                 print_info(f"Очікування {query_timeout} секунд перед наступним запитом...")
                 time_tracker.start_waiting()
                 countdown_timer(query_timeout)
                 time_tracker.end_waiting()
+
             reporting_period = f"{year}-{week:02d}"
-            print_info(f"{'─' * 40}")
+            # Прогрес-інфо для 2+ тижня
             if i > 0:
-                print_info(time_tracker.get_progress_info())
-            print_info(f"Обробка тижня: {reporting_period} ({i+1}/{len(year_week_pairs)})")
+                progress_info = time_tracker.get_progress_info()
+                # Форматуємо як однорядковий блок
+                lines = progress_info.strip().split("\n")
+                print_progress(" | ".join(line.strip() for line in lines))
+
+            print_header(f"Тиждень {reporting_period}  ({i+1}/{len(year_week_pairs)})")
             file_path = run_dax_query(
                 connection, reporting_period,
                 config.query, config.export, config.xlsx,
