@@ -237,6 +237,8 @@ def run_dax_query(
         total_rows = 0
         is_first_chunk = True
 
+        failed_sinks: set[str] = set()
+
         def _flush_to_sinks(df_chunk: pd.DataFrame, is_first: bool) -> bool:
             """Відправляє chunk у sinks. Повертає False якщо це був перший chunk."""
             if not sinks:
@@ -246,13 +248,17 @@ def run_dax_query(
             df_for_sinks["year_num"] = year_num
             df_for_sinks["week_num"] = week_num
             for sink in sinks:
+                sink_name = type(sink).__name__
+                if sink_name in failed_sinks:
+                    continue  # Пропускаємо sink що вже впав
                 try:
                     if is_first:
                         sink.setup(df_for_sinks)
                         sink.delete_period(year_num, week_num)
                     sink.insert(df_for_sinks, year=year_num, week=week_num)
                 except Exception as e:
-                    print_error(f"Помилка sink {type(sink).__name__}: {e}")
+                    print_error(f"Помилка sink {sink_name}: {e}")
+                    failed_sinks.add(sink_name)
             return False
 
         print_progress("Експорт/збереження отриманих даних (потоковий режим)...")
@@ -305,8 +311,10 @@ def run_dax_query(
 
         if sink_only:
             if total_rows > 0 and sinks:
-                sink_names = ", ".join(type(s).__name__.replace("Sink", "") for s in sinks)
-                print_success(f"Дані завантажено у {sink_names}: {total_rows} рядків ({reporting_period})")
+                ok_sinks = [s for s in sinks if type(s).__name__ not in failed_sinks]
+                if ok_sinks:
+                    sink_names = ", ".join(type(s).__name__.replace("Sink", "") for s in ok_sinks)
+                    print_success(f"Дані завантажено у {sink_names}: {total_rows} рядків ({reporting_period})")
             return None
             
         return exported_files[0] if exported_files else None
