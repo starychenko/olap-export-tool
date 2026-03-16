@@ -97,8 +97,12 @@ def _align_df_to_schema(df: pd.DataFrame, schema: dict[str, str]) -> pd.DataFram
             def _to_str(v):
                 if pd.isnull(v):
                     return None
-                if isinstance(v, float) and v == int(v):
-                    return str(int(v))
+                if isinstance(v, float):
+                    import math
+                    if not math.isfinite(v):
+                        return None
+                    if v == int(v):
+                        return str(int(v))
                 return str(v)
             df[col] = df[col].apply(_to_str)
     return df
@@ -270,8 +274,7 @@ class DuckDBSink(AnalyticsSink):
         if df.empty:
             return 0
 
-        self._upload_parquet(df)
-        return len(df)
+        return self._upload_parquet(df)
 
     def close(self) -> None:
         try:

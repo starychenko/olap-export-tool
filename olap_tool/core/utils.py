@@ -37,12 +37,14 @@ def init_utils(ascii_logs: bool = False) -> None:
         ICON_STOP = "🛑"
 
 
-def ensure_dir(pathlike):
+def ensure_dir(pathlike, verbose: bool = False):
     from pathlib import Path
 
     path = Path(pathlike)
+    created = not path.exists()
     path.mkdir(parents=True, exist_ok=True)
-    print_info(f"Директорія '{path}' перевірена/створена")
+    if verbose or created:
+        print_info(f"Директорія '{path}' створена")
     return path
 
 

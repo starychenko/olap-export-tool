@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 from InquirerPy import inquirer
@@ -196,14 +195,10 @@ def run_wizard() -> None:
     console.print(f"[dim]▶ {' '.join(argv)}[/dim]\n")
 
     from olap_tool.core.runner import main as runner_main
-    old_argv = sys.argv
-    sys.argv = argv
     try:
-        result = runner_main()
+        result = runner_main(argv=argv)
     except SystemExit as e:
         result = e.code if isinstance(e.code, int) else 0
-    finally:
-        sys.argv = old_argv
 
     if (result or 0) == 0:
         console.print("\n[bold green]✓ Завершено успішно[/bold green]")

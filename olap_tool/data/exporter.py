@@ -102,14 +102,16 @@ class XlsxStreamWriter:
         self.row_count += len(df)
 
     def close(self):
-        if not self.xlsx_config.min_format:
-            # We must apply columns widths based on tracked lengths
-            for col_idx, max_len in self.col_max_lengths.items():
-                # We need to consider the header length as well, but we don't have access to the exact header string length here easily unless we tracked it.
-                # Just use max_len + 2, capped at 100.
-                column_width = min(max_len + 2, 100)
-                self.worksheet.set_column(col_idx, col_idx, column_width)
-            self.worksheet.freeze_panes(1, 0)
-            
-        self.workbook.close()
+        from ..core.utils import print_error
+        try:
+            if not self.xlsx_config.min_format:
+                for col_idx, max_len in self.col_max_lengths.items():
+                    column_width = min(max_len + 2, 100)
+                    self.worksheet.set_column(col_idx, col_idx, column_width)
+                self.worksheet.freeze_panes(1, 0)
+
+            self.workbook.close()
+        except Exception as e:
+            print_error(f"Помилка при збереженні XLSX файлу {self.file_path_str}: {e}")
+            return self.row_count, 0
         return self.row_count, Path(self.file_path_str).stat().st_size

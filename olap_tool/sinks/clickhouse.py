@@ -169,15 +169,12 @@ def _delete_period(
     if schema is None:
         schema = get_table_schema(client, database, table)
 
-    conditions = []
-    if "year_num" in schema:
-        conditions.append(f"year_num = {year}")
-    if "week_num" in schema:
-        conditions.append(f"week_num = {week}")
-
-    if conditions:
-        where = " AND ".join(conditions)
-        client.command(f"DELETE FROM `{database}`.`{table}` WHERE {where}")
+    # Видаляємо тільки якщо обидва ключі є в схемі — інакше ризик знищити весь рік
+    if "year_num" in schema and "week_num" in schema:
+        client.command(
+            f"DELETE FROM `{database}`.`{table}` "
+            f"WHERE year_num = {year} AND week_num = {week}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +247,9 @@ def export_to_clickhouse(
             print_error(f"Не вдалося підключитися до ClickHouse: {e}")
             return 0
 
-    df_clean = sanitize_df(df)
+    # Не викликаємо sanitize_df тут — очікуємо що caller вже sanitize_df зробив.
+    # Якщо викликається напряму (не через sink) — caller відповідає за санітизацію.
+    df_clean = df
 
     try:
         if own_client:

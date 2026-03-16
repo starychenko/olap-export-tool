@@ -86,9 +86,19 @@ def run_wizard() -> None:
     ).execute()
 
     # 2. Директорія
+    class DirectoryValidator(Validator):
+        def validate(self, document):
+            text = document.text.strip()
+            if not text or not Path(text).exists():
+                raise ValidationError(
+                    message="Директорія не існує",
+                    cursor_position=len(text),
+                )
+
     directory: str = inquirer.text(
         message="Директорія з XLSX:",
         default="result/",
+        validate=DirectoryValidator(),
     ).execute()
 
     # 3. Рік (опційно)

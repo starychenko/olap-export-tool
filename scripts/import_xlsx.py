@@ -413,7 +413,8 @@ def main() -> int:
             elif target == "duckdb":
                 from olap_tool.sinks import DuckDBSink, sanitize_df
                 from olap_tool.core.config import DuckDBConfig
-                assert isinstance(cfg, DuckDBConfig)
+                if not isinstance(cfg, DuckDBConfig):
+                    raise TypeError(f"Очікувався DuckDBConfig, отримано {type(cfg).__name__}")
                 sink = DuckDBSink(cfg)
                 if not df_init.empty:
                     df_init_clean = sanitize_df(df_init.copy())
@@ -426,7 +427,8 @@ def main() -> int:
                 from olap_tool.core.config import PostgreSQLConfig
                 from dataclasses import fields as dc_fields
 
-                assert isinstance(cfg, PostgreSQLConfig)
+                if not isinstance(cfg, PostgreSQLConfig):
+                    raise TypeError(f"Очікувався PostgreSQLConfig, отримано {type(cfg).__name__}")
                 # Зберігаємо cfg як dict для передачі у thread-local фабрику
                 _pg_cfg_kwargs = {
                     f.name: getattr(cfg, f.name) for f in dc_fields(cfg)

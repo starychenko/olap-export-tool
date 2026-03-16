@@ -34,7 +34,7 @@ def generate_year_week_pairs(start_period, end_period, available_weeks):
 
     current_year = datetime.datetime.now().year
     min_year = current_year - 3
-    max_year = current_year
+    max_year = current_year + 1  # Дозволяємо крос-річні періоди (напр. грудень → січень)
     if start_year < min_year or end_year > max_year:
         print_warning(f"Невірні значення року (має бути між {min_year} та {max_year})")
         return []
@@ -85,18 +85,22 @@ def run_dax_query(
         return []
 
     filter_fg1_name = query_config.filter_fg1_name
-    escaped_filter_fg1 = (filter_fg1_name or "").replace('"', '""')
+    has_filter = bool(filter_fg1_name)
+    escaped_filter_fg1 = (filter_fg1_name or "").replace('"', '""') if has_filter else ""
 
     result_dir = Path(paths_config.result_dir)
     year_dir = result_dir / str(year_num)
     ensure_dir(year_dir)
 
-    print_info(f"Формування DAX запиту з параметрами:")
+    from .exporter import CsvStreamWriter, XlsxStreamWriter
+    from ..core.utils import print_info_detail
     from colorama import Fore
 
-    print(f"   {Fore.CYAN}Рік:      {Fore.WHITE}{year_num}")
-    print(f"   {Fore.CYAN}Тиждень:  {Fore.WHITE}{week_num}")
-    print(f"   {Fore.CYAN}Фільтр:   {Fore.WHITE}{filter_fg1_name}")
+    print_info_detail("Формування DAX запиту з параметрами:", {
+        "Рік": str(year_num),
+        "Тиждень": str(week_num),
+        "Фільтр": str(filter_fg1_name),
+    })
 
     query = f"""
     /* START QUERY BUILDER */
@@ -126,8 +130,8 @@ def run_dax_query(
         Promo[promo_type_name],
         Promo[basis],
         KEEPFILTERS( TREATAS( {{{year_num}}}, 'Calendar'[year_num] )),
-        KEEPFILTERS( TREATAS( {{{week_num}}}, 'Calendar'[week_num] )),
-        KEEPFILTERS( TREATAS( {{"{escaped_filter_fg1}"}}, Goods[fg1_name] )),
+        KEEPFILTERS( TREATAS( {{{week_num}}}, 'Calendar'[week_num] )),{f'''
+        KEEPFILTERS( TREATAS( {{"{escaped_filter_fg1}"}}, Goods[fg1_name] )),''' if has_filter else ''}
         "Реалізація, к-сть", [sell_qty],
         "Реалізація, грн.", [sell_amount_nds],
         "Реалізація ЦЗ, грн.", [buy_amount_nds],
@@ -187,8 +191,6 @@ def run_dax_query(
         needs_xlsx = (export_format in ["XLSX", "BOTH"]) and not force_csv_only and not sink_only
         needs_csv = (export_format in ["CSV", "BOTH"] or force_csv_only) and not sink_only
 
-        from .exporter import CsvStreamWriter, XlsxStreamWriter
-
         xlsx_writer = None
         csv_writer = None
         exported_files = []
@@ -231,13 +233,11 @@ def run_dax_query(
             for col in duplicate_columns:
                 match = re.match(r"(\w+)\[([^\]]+)\]", col)
                 if match:
-                    print(
-                        f"   {Fore.YELLOW}• {Fore.WHITE}{col} {Fore.YELLOW}(конфлікт імені: {Fore.WHITE}{match.group(2)}{Fore.YELLOW})"
-                    )
+                    print_warning(f"  • {col} (конфлікт імені: {match.group(2)})")
         else:
             print_info("Усі стовпці успішно перейменовано")
 
-        progress.animation_running = False
+        progress.animation_stop_event.set()
         spinner_thread.join(timeout=1.0)
         query_duration = _time.time() - query_start_time
         print_success(f"Запит виконано за {format_time(query_duration)}.")
@@ -245,6 +245,24 @@ def run_dax_query(
         chunk_size = 50000
         total_rows = 0
         is_first_chunk = True
+
+        def _flush_to_sinks(df_chunk: pd.DataFrame, is_first: bool) -> bool:
+            """Відправляє chunk у sinks. Повертає False якщо це був перший chunk."""
+            if not sinks:
+                return is_first
+            from ..sinks import sanitize_df as _sanitize
+            df_for_sinks = _sanitize(df_chunk)
+            df_for_sinks["year_num"] = year_num
+            df_for_sinks["week_num"] = week_num
+            for sink in sinks:
+                try:
+                    if is_first:
+                        sink.setup(df_for_sinks)
+                        sink.delete_period(year_num, week_num)
+                    sink.insert(df_for_sinks, year=year_num, week=week_num)
+                except Exception as e:
+                    print_error(f"Помилка sink {type(sink).__name__}: {e}")
+            return False
 
         print_progress("Експорт/збереження отриманих даних (потоковий режим)...")
         # Використовуємо пряму ітерацію fetchone()-генератора:
@@ -264,22 +282,8 @@ def run_dax_query(
             if csv_writer:
                 csv_writer.write_chunk(df_chunk)
 
-            if sinks:
-                from ..sinks import sanitize_df as _sanitize
-                df_for_sinks = _sanitize(df_chunk)
-                df_for_sinks["year_num"] = year_num
-                df_for_sinks["week_num"] = week_num
-                for sink in sinks:
-                    try:
-                        if is_first_chunk:
-                            sink.setup(df_for_sinks)
-                            sink.delete_period(year_num, week_num)
-                        sink.insert(df_for_sinks, year=year_num, week=week_num)
-                    except Exception as e:
-                        print_error(f"Помилка sink {type(sink).__name__}: {e}")
-
+            is_first_chunk = _flush_to_sinks(df_chunk, is_first_chunk)
             total_rows += len(df_chunk)
-            is_first_chunk = False
 
         # Останній неповний chunk
         if raw_chunk:
@@ -288,19 +292,7 @@ def run_dax_query(
                 xlsx_writer.write_chunk(df_chunk)
             if csv_writer:
                 csv_writer.write_chunk(df_chunk)
-            if sinks:
-                from ..sinks import sanitize_df as _sanitize
-                df_for_sinks = _sanitize(df_chunk)
-                df_for_sinks["year_num"] = year_num
-                df_for_sinks["week_num"] = week_num
-                for sink in sinks:
-                    try:
-                        if is_first_chunk:
-                            sink.setup(df_for_sinks)
-                            sink.delete_period(year_num, week_num)
-                        sink.insert(df_for_sinks, year=year_num, week=week_num)
-                    except Exception as e:
-                        print_error(f"Помилка sink {type(sink).__name__}: {e}")
+            is_first_chunk = _flush_to_sinks(df_chunk, is_first_chunk)
             total_rows += len(df_chunk)
 
         for filepath in exported_files:
@@ -338,7 +330,7 @@ def run_dax_query(
             except Exception:
                 pass
         if spinner_thread is not None:
-            progress.animation_running = False
+            progress.animation_stop_event.set()
             try:
                 spinner_thread.join(timeout=1.0)
             except Exception:

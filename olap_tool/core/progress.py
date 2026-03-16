@@ -8,7 +8,7 @@ from colorama import Fore
 from typing import Callable
 
 
-animation_running = False
+animation_stop_event = threading.Event()
 
 # Значення за замовчуванням — перевизначаються через init_display()
 _ascii_mode = False
@@ -150,20 +150,18 @@ class TimeTracker:
 
 
 def loading_spinner(description: str, estimated_time: float | None = None):
-    global animation_running
-    
-    animation_running = True
+    animation_stop_event.clear()
     spinner = itertools.cycle(SPINNER_FRAMES)
     start_time = time.time()
     message = ""
-    while animation_running:
+    while not animation_stop_event.is_set():
         elapsed = time.time() - start_time
         elapsed_str = format_time(elapsed)
         message = f"{Fore.BLUE}[{get_current_time()}] {next(spinner)} {description} | Час: {elapsed_str}"
         sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
         sys.stdout.write(message)
         sys.stdout.flush()
-        time.sleep(0.1)
+        animation_stop_event.wait(0.1)
     # Don't print empty clears in TUI mode to avoid status bar stutter
     if not hasattr(sys.stdout, "_app"):
         sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")

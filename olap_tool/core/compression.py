@@ -86,6 +86,12 @@ def compress_files(
 
     except Exception as e:
         print_error(f"Помилка при створенні ZIP архіву: {e}")
+        # Видаляємо частковий ZIP файл якщо він залишився
+        if output_path_obj.exists():
+            try:
+                output_path_obj.unlink()
+            except Exception:
+                pass
         return None
 
 

@@ -7,9 +7,12 @@ import argparse
 from .utils import print_error, print_warning
 
 
-def parse_arguments() -> argparse.Namespace:
+def parse_arguments(argv: "list[str] | None" = None) -> argparse.Namespace:
     """
     Парсинг аргументів командного рядка.
+
+    Args:
+        argv: Список аргументів (без імені програми). Якщо None — читає з sys.argv.
 
     Returns:
         argparse.Namespace: Об'єкт з розпарсеними аргументами
@@ -165,7 +168,7 @@ def parse_arguments() -> argparse.Namespace:
         help='Увімкнути режим налагодження'
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Обробка legacy команди clear_credentials
     if args.command == 'clear_credentials':

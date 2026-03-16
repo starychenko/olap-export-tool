@@ -103,8 +103,8 @@ def init_dotnet_and_providers(adomd_dll_path: str = ""):
             if adomd_dll_path not in sys.path:
                 sys.path.append(adomd_dll_path)
         else:
-            print(
-                "[INIT] Попередження: Шлях ADOMD_DLL_PATH не задано. Перевірте config.yaml або .env"
+            print_warning(
+                "Шлях ADOMD_DLL_PATH не задано. Перевірте config.yaml або .env"
             )
 
         clr.AddReference("Microsoft.AnalysisServices.AdomdClient")  # type: ignore[attr-defined]
@@ -127,7 +127,7 @@ def init_dotnet_and_providers(adomd_dll_path: str = ""):
 
         return Pyadomd, OleDbConnection, OleDbCommand
     except Exception as e:
-        print(f"[INIT] Помилка ініціалізації .NET провайдерів/бібліотек: {e}")
+        print_error(f"Помилка ініціалізації .NET провайдерів/бібліотек: {e}")
         return None, None, None
 
 
@@ -202,6 +202,7 @@ class OleDbCursor:
         self.command = None
         self.OleDbCommand = OleDbCommand
         self.description = None
+        self.arraysize = 1  # DB-API 2.0 default
 
     def execute(self, query: str):
         self.command = self.OleDbCommand(query, self.connection)
@@ -234,7 +235,7 @@ class OleDbCursor:
         if not self.reader:
             return []
         if size is None:
-            size = self.reader.FieldCount  # Fallback
+            size = self.arraysize
             
         rows = []
         import System  # type: ignore
@@ -269,6 +270,11 @@ class OleDbCursor:
         if self.reader and not self.reader.IsClosed:
             self.reader.Close()
         self.reader = None
+        if self.command is not None:
+            try:
+                self.command.Dispose()
+            except Exception:
+                pass
         self.command = None
 
 

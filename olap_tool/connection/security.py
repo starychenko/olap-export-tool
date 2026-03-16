@@ -89,8 +89,12 @@ def secure_credentials_file(file_path: Path):
         if os.name == "nt":
             import subprocess
 
-            cmd = f'icacls "{str(file_path)}" /inheritance:r /grant:r "{os.environ.get("USERNAME", "")}":F /C'
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            username = os.environ.get("USERNAME", "")
+            result = subprocess.run(
+                ["icacls", str(file_path), "/inheritance:r", "/grant:r", f"{username}:F", "/C"],
+                capture_output=True,
+                text=True,
+            )
             if result.returncode != 0:
                 print_warning(
                     f"Не вдалося застосувати ACL через icacls: {result.stderr.strip()}"
@@ -104,17 +108,25 @@ def secure_credentials_file(file_path: Path):
 
 
 def encrypt_credentials(username: str, password: str, encryption_key: bytes) -> bytes:
+    import json as _json
     cipher = Fernet(encryption_key)
-    data = f"{username}:{password}".encode()
+    data = _json.dumps({"u": username, "p": password}).encode()
     return cipher.encrypt(data)
 
 
 def decrypt_credentials(encrypted_data: bytes, encryption_key: bytes):
+    import json as _json
     try:
         cipher = Fernet(encryption_key)
         decrypted_data = cipher.decrypt(encrypted_data)
-        username, password = decrypted_data.decode().split(":", 1)
-        return username, password
+        text = decrypted_data.decode()
+        # Зворотна сумісність: старий формат "username:password"
+        if text.startswith("{"):
+            obj = _json.loads(text)
+            return obj["u"], obj["p"]
+        else:
+            username, password = text.split(":", 1)
+            return username, password
     except Exception as e:
         print_error(f"Помилка розшифрування облікових даних: {e}")
         return None, None

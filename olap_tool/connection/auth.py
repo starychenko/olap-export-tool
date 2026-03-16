@@ -36,6 +36,10 @@ def save_credentials(
                 f.write(b"\n")
                 f.write(encrypted_data)
         else:
+            print_info(
+                "УВАГА: Облікові дані зберігаються без шифрування. "
+                "Рекомендується встановити CREDENTIALS_ENCRYPTED=true у .env"
+            )
             with open(cred_path, "w") as f:
                 f.write(f"{username}:{password}")
 

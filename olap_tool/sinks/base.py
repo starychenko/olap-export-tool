@@ -33,7 +33,18 @@ def _safe_column_name(name: str) -> str:
 def sanitize_df(df: pd.DataFrame) -> pd.DataFrame:
     """Оброблює inf/NaN та перетворює колонки на безпечні імена."""
     df = df.copy()
-    df.rename(columns={col: _safe_column_name(col) for col in df.columns}, inplace=True)
+    rename_map = {}
+    seen: dict[str, int] = {}
+    for col in df.columns:
+        safe = _safe_column_name(col)
+        # Детекція колізій: якщо safe-ім'я вже зустрічалось — додаємо суфікс
+        if safe in seen:
+            seen[safe] += 1
+            safe = f"{safe}_{seen[safe]}"
+        else:
+            seen[safe] = 0
+        rename_map[col] = safe
+    df.rename(columns=rename_map, inplace=True)
     float_cols = df.select_dtypes(include=["float64", "float32"]).columns
     if len(float_cols) > 0:
         df[float_cols] = df[float_cols].replace([np.inf, -np.inf], np.nan)

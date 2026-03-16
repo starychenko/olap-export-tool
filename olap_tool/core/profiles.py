@@ -20,8 +20,8 @@ except ImportError:
 from .utils import print_info, print_warning, print_error
 
 
-# Директорія для зберігання профілів
-PROFILES_DIR = Path("profiles")
+# Директорія для зберігання профілів (відносно кореня проєкту)
+PROFILES_DIR = Path(__file__).resolve().parent.parent.parent / "profiles"
 
 
 def ensure_profiles_dir() -> None:
