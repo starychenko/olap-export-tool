@@ -37,7 +37,7 @@ class CsvStreamWriter:
             encoding=self.encoding,
             index=False,
             header=self.is_first,
-            quoting=self.quoting,
+            quoting=self.quoting,  # type: ignore[arg-type]
             na_rep=""
         )
         self.is_first = False
