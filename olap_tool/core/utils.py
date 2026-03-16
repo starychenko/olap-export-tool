@@ -158,31 +158,40 @@ def format_time(seconds: float):
         return f"{seconds:.2f} сек"
 
 
+_System = None  # Кеш .NET System модуля (завантажується один раз)
+_System_loaded = False
+
+
 def convert_dotnet_to_python(value):
     """Конвертує .NET типи (через pythonnet) у серіалізовані Python значення для запису в CSV/XLSX."""
-    try:
-        import System  # type: ignore
-    except Exception:
-        System = None  # type: ignore
+    global _System, _System_loaded
+    if not _System_loaded:
+        try:
+            import System  # type: ignore
+            _System = System
+        except Exception:
+            _System = None
+        _System_loaded = True
 
     if value is None:
         return None
-    if System is not None:
-        if isinstance(value, System.DateTime):
+    S = _System
+    if S is not None:
+        if isinstance(value, S.DateTime):
             epoch = datetime.date(1899, 12, 30)
             d = datetime.date(value.Year, value.Month, value.Day)
             return (d - epoch).days
-        if isinstance(value, (System.Double, System.Single)):
+        if isinstance(value, (S.Double, S.Single)):
             return float(value)
-        if isinstance(value, System.Decimal):
+        if isinstance(value, S.Decimal):
             return float(value)
-        if isinstance(value, System.DBNull):
+        if isinstance(value, S.DBNull):
             return None
-        if isinstance(value, (System.Int32, System.Int64, System.UInt32, System.UInt64)):
+        if isinstance(value, (S.Int32, S.Int64, S.UInt32, S.UInt64)):
             return int(value)
-        if isinstance(value, System.String):
+        if isinstance(value, S.String):
             return str(value)
-        if isinstance(value, System.Boolean):
+        if isinstance(value, S.Boolean):
             return bool(value)
     try:
         return str(value)

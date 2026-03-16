@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 import xlsxwriter  # type: ignore
 
@@ -27,9 +28,9 @@ class CsvStreamWriter:
             self.quoting = csv.QUOTE_MINIMAL
         self.is_first = True
         self.row_count = 0
-        
+
     def write_chunk(self, df: pd.DataFrame):
-        df_replaced = df.replace([math.inf, -math.inf], None)
+        df_replaced = df.replace([np.inf, -np.inf], None)
         df_replaced.to_csv(
             str(self.file_path),
             mode='w' if self.is_first else 'a',
@@ -42,7 +43,7 @@ class CsvStreamWriter:
         )
         self.is_first = False
         self.row_count += len(df)
-        
+
     def close(self):
         pass
 
@@ -51,9 +52,12 @@ class XlsxStreamWriter:
     def __init__(self, file_path: Path, sheet_name: str, excel_header: "ExcelHeaderConfig", xlsx_config: "XlsxConfig"):
         self.file_path_str = str(file_path)
         self.xlsx_config = xlsx_config
-        self.workbook = xlsxwriter.Workbook(self.file_path_str, {"constant_memory": True})
+        self.workbook = xlsxwriter.Workbook(self.file_path_str, {
+            "constant_memory": True,
+            "nan_inf_to_errors": True,
+        })
         self.worksheet = self.workbook.add_worksheet(sheet_name)
-        
+
         if not xlsx_config.min_format:
             self.header_format = self.workbook.add_format({
                 "bold": True,
@@ -68,37 +72,48 @@ class XlsxStreamWriter:
             })
         else:
             self.header_format = None
-            
+
         self.is_first = True
         self.row_idx = 1
         self.row_count = 0
-        self.col_max_lengths = {}
-        
+        self.col_max_lengths: dict[int, int] = {}
+
     def write_chunk(self, df: pd.DataFrame):
         if self.is_first:
+            columns = list(df.columns)
             if self.header_format:
-                self.worksheet.write_row(0, 0, list(df.columns), self.header_format)
+                self.worksheet.write_row(0, 0, columns, self.header_format)
             else:
-                self.worksheet.write_row(0, 0, list(df.columns))
+                self.worksheet.write_row(0, 0, columns)
+            # Ініціалізуємо ширину з назв колонок
+            if not self.xlsx_config.min_format:
+                for col_idx, col_name in enumerate(columns):
+                    self.col_max_lengths[col_idx] = len(str(col_name))
             self.is_first = False
-            
-        for row_data in df.itertuples(index=False):
-            safe_row = []
-            for col_idx, cell_value in enumerate(row_data):
-                if isinstance(cell_value, float) and (math.isnan(cell_value) or math.isinf(cell_value)):
-                    safe_row.append(None)
-                else:
-                    safe_row.append(cell_value)
-                    
-                # Track max length for column sizing if needed
-                if not self.xlsx_config.min_format:
-                    str_len = len(str(cell_value)) if cell_value is not None else 0
-                    if col_idx not in self.col_max_lengths or str_len > self.col_max_lengths[col_idx]:
-                        self.col_max_lengths[col_idx] = str_len
-                        
-            self.worksheet.write_row(self.row_idx, 0, safe_row)
+
+        # Vectorized: замінюємо NaN/inf на None у float-колонках
+        float_cols = df.select_dtypes(include=["float64", "float32"]).columns
+        if len(float_cols) > 0:
+            df = df.copy()
+            df[float_cols] = df[float_cols].replace([np.inf, -np.inf, np.nan], None)
+
+        # Ширина колонок — vectorized через pandas (замість per-cell str())
+        if not self.xlsx_config.min_format:
+            for col_idx, col_name in enumerate(df.columns):
+                max_len = df[col_name].astype(str).str.len().max()
+                if pd.notna(max_len):
+                    max_len = int(max_len)
+                    if col_idx not in self.col_max_lengths or max_len > self.col_max_lengths[col_idx]:
+                        self.col_max_lengths[col_idx] = max_len
+
+        # Конвертуємо DataFrame у list of lists — уникаємо itertuples overhead
+        # fillna замінює NaN на "" для xlsxwriter (None в tolist() стає float nan)
+        rows = df.values.tolist()
+
+        for row in rows:
+            self.worksheet.write_row(self.row_idx, 0, row)
             self.row_idx += 1
-            
+
         self.row_count += len(df)
 
     def close(self):
