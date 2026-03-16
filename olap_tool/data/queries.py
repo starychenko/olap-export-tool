@@ -247,17 +247,18 @@ def run_dax_query(
         is_first_chunk = True
 
         print_progress("Експорт/збереження отриманих даних (потоковий режим)...")
-        while True:
-            chunk = cursor.fetchmany(chunk_size)
-            if not chunk:
-                break
-            
-            converted_chunk = []
-            for row in chunk:
-                converted_chunk.append([convert_dotnet_to_python(v) for v in row])
-                
-            df_chunk = pd.DataFrame(converted_chunk, columns=renamed_columns)
-            
+        # Використовуємо пряму ітерацію fetchone()-генератора:
+        # fetchmany() має баг у pyadomd — кожен виклик next(self.fetchone()) створює
+        # новий генератор, що руйнує стан XmlReader після ~50000 рядків.
+        raw_chunk: list = []
+        for row in cursor.fetchone():
+            raw_chunk.append([convert_dotnet_to_python(v) for v in row])
+            if len(raw_chunk) < chunk_size:
+                continue
+
+            df_chunk = pd.DataFrame(raw_chunk, columns=renamed_columns)
+            raw_chunk = []
+
             if xlsx_writer:
                 xlsx_writer.write_chunk(df_chunk)
             if csv_writer:
@@ -268,7 +269,6 @@ def run_dax_query(
                 df_for_sinks = _sanitize(df_chunk)
                 df_for_sinks["year_num"] = year_num
                 df_for_sinks["week_num"] = week_num
-                
                 for sink in sinks:
                     try:
                         if is_first_chunk:
@@ -280,6 +280,28 @@ def run_dax_query(
 
             total_rows += len(df_chunk)
             is_first_chunk = False
+
+        # Останній неповний chunk
+        if raw_chunk:
+            df_chunk = pd.DataFrame(raw_chunk, columns=renamed_columns)
+            if xlsx_writer:
+                xlsx_writer.write_chunk(df_chunk)
+            if csv_writer:
+                csv_writer.write_chunk(df_chunk)
+            if sinks:
+                from ..sinks import sanitize_df as _sanitize
+                df_for_sinks = _sanitize(df_chunk)
+                df_for_sinks["year_num"] = year_num
+                df_for_sinks["week_num"] = week_num
+                for sink in sinks:
+                    try:
+                        if is_first_chunk:
+                            sink.setup(df_for_sinks)
+                            sink.delete_period(year_num, week_num)
+                        sink.insert(df_for_sinks, year=year_num, week=week_num)
+                    except Exception as e:
+                        print_error(f"Помилка sink {type(sink).__name__}: {e}")
+            total_rows += len(df_chunk)
 
         for filepath in exported_files:
             file_size_bytes = 0
