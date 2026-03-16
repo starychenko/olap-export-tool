@@ -1,15 +1,10 @@
 import csv
-import math
-import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import xlsxwriter  # type: ignore
-
-from ..core.utils import print_progress, convert_dotnet_to_python
-from ..core import progress
 
 if TYPE_CHECKING:
     from ..core.config import ExcelHeaderConfig, XlsxConfig
@@ -30,8 +25,9 @@ class CsvStreamWriter:
         self.row_count = 0
 
     def write_chunk(self, df: pd.DataFrame):
-        df_replaced = df.replace([np.inf, -np.inf], None)
-        df_replaced.to_csv(
+        # inf → NaN (to_csv з na_rep="" запише як порожній рядок)
+        df_clean = df.replace([np.inf, -np.inf], np.nan)
+        df_clean.to_csv(
             str(self.file_path),
             mode='w' if self.is_first else 'a',
             sep=self.delimiter,
@@ -52,6 +48,7 @@ class XlsxStreamWriter:
     def __init__(self, file_path: Path, sheet_name: str, excel_header: "ExcelHeaderConfig", xlsx_config: "XlsxConfig"):
         self.file_path_str = str(file_path)
         self.xlsx_config = xlsx_config
+        # nan_inf_to_errors: NaN/Inf записуються як порожні клітинки замість помилки
         self.workbook = xlsxwriter.Workbook(self.file_path_str, {
             "constant_memory": True,
             "nan_inf_to_errors": True,
@@ -85,19 +82,12 @@ class XlsxStreamWriter:
                 self.worksheet.write_row(0, 0, columns, self.header_format)
             else:
                 self.worksheet.write_row(0, 0, columns)
-            # Ініціалізуємо ширину з назв колонок
             if not self.xlsx_config.min_format:
                 for col_idx, col_name in enumerate(columns):
                     self.col_max_lengths[col_idx] = len(str(col_name))
             self.is_first = False
 
-        # Vectorized: замінюємо NaN/inf на None у float-колонках
-        float_cols = df.select_dtypes(include=["float64", "float32"]).columns
-        if len(float_cols) > 0:
-            df = df.copy()
-            df[float_cols] = df[float_cols].replace([np.inf, -np.inf, np.nan], None)
-
-        # Ширина колонок — vectorized через pandas (замість per-cell str())
+        # Ширина колонок — vectorized через pandas
         if not self.xlsx_config.min_format:
             for col_idx in range(len(df.columns)):
                 series = df.iloc[:, col_idx]
@@ -105,10 +95,9 @@ class XlsxStreamWriter:
                 if col_idx not in self.col_max_lengths or max_len > self.col_max_lengths[col_idx]:
                     self.col_max_lengths[col_idx] = max_len
 
-        # Конвертуємо DataFrame у list of lists — уникаємо itertuples overhead
-        # fillna замінює NaN на "" для xlsxwriter (None в tolist() стає float nan)
+        # DataFrame → list of lists; NaN/Inf залишаються як float('nan')/float('inf')
+        # xlsxwriter з nan_inf_to_errors=True запише їх як порожні клітинки
         rows = df.values.tolist()
-
         for row in rows:
             self.worksheet.write_row(self.row_idx, 0, row)
             self.row_idx += 1
