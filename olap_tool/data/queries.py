@@ -168,6 +168,7 @@ def run_dax_query(
 
     print_progress("Виконання запиту до OLAP-кубу...")
     query_start_time = _time.time()
+    cursor = None
     spinner_thread = None
     try:
         cursor = connection.cursor()
