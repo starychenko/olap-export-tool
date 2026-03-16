@@ -310,6 +310,9 @@ def run_dax_query(
             return []
 
         if sink_only:
+            if total_rows > 0 and sinks:
+                sink_names = ", ".join(type(s).__name__.replace("Sink", "") for s in sinks)
+                print_success(f"Дані завантажено у {sink_names}: {total_rows} рядків ({reporting_period})")
             return None
             
         return exported_files[0] if exported_files else None

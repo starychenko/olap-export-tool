@@ -253,3 +253,5 @@ def run_wizard() -> None:
         console.print("\n[bold green]✓ Завершено успішно[/bold green]")
     else:
         console.print(f"\n[bold red]✗ Завершено з помилкою (код {result})[/bold red]")
+
+    console.input("\n[dim]Натисніть Enter щоб повернутися в меню...[/dim]")

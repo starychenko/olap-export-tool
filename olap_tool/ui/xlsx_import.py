@@ -173,3 +173,5 @@ def run_wizard() -> None:
         console.print(f"\n[bold red]✗ Помилка: {exc}[/bold red]")
     finally:
         sys.argv = old_argv
+
+    console.input("\n[dim]Натисніть Enter щоб повернутися в меню...[/dim]")

@@ -1,13 +1,18 @@
 """Головне меню консольного UI."""
 from __future__ import annotations
 
+import os
+
 from InquirerPy import inquirer
 from InquirerPy.separator import Separator
-from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
+from . import console
 
-console = Console()
+
+def _clear_screen() -> None:
+    """Очищає консоль (кросплатформенно)."""
+    os.system("cls" if os.name == "nt" else "clear")
 
 
 def _print_header() -> None:
@@ -33,6 +38,7 @@ def _print_header() -> None:
 
 def run() -> None:
     """Запускає цикл головного меню."""
+    _clear_screen()
     _print_header()
 
     while True:
@@ -54,15 +60,24 @@ def run() -> None:
         if action == "export":
             try:
                 from .olap_export import run_wizard as export_wizard
+                _clear_screen()
                 export_wizard()
             except KeyboardInterrupt:
                 console.print("\n[yellow]Скасовано.[/yellow]")
+            # Повертаємось у меню — очищаємо і показуємо header
+            _clear_screen()
+            _print_header()
+
         elif action == "import":
             try:
                 from .xlsx_import import run_wizard as import_wizard
+                _clear_screen()
                 import_wizard()
             except KeyboardInterrupt:
                 console.print("\n[yellow]Скасовано.[/yellow]")
+            _clear_screen()
+            _print_header()
+
         elif action == "quit":
             console.print("[dim]До побачення.[/dim]")
             return

@@ -34,7 +34,6 @@ def signal_handler(signum, frame):
     Обробник сигналу для graceful shutdown.
     """
     global _shutdown_requested
-    print()  # Новий рядок після Ctrl+C
     print_warning("Отримано сигнал завершення. Зупинка планувальника...")
     _shutdown_requested = True
 
@@ -126,7 +125,6 @@ def run_scheduled_task(profile_name: str) -> None:
     """
     from .runner import main
 
-    print()
     print_info(f"Запуск задачі: {profile_name} о {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
@@ -281,9 +279,8 @@ def daemon_mode(profiles: List[str]) -> int:
         for job in schedule.jobs[:5]:  # Показуємо перші 5
             next_run = job.next_run
             if next_run:
-                print(f"  • {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+                print_info(f"  • {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    print()
     print_success("Daemon режим активний. Натисніть Ctrl+C для зупинки")
 
     # Основний цикл
