@@ -1,9 +1,10 @@
 # OLAP Export Tool
 
-Інструмент для автоматизованого експорту даних з OLAP кубів (Microsoft Analysis Services) у файли Excel та CSV з підтримкою CLI, YAML-конфігурації, профілів, планувальника, автоматичних періодів та завантаження у ClickHouse.
+Інструмент для автоматизованого експорту даних з OLAP кубів (Microsoft Analysis Services) у файли Excel та CSV з підтримкою CLI, інтерактивного консольного UI, YAML-конфігурації, профілів, планувальника, автоматичних періодів та завантаження у ClickHouse, DuckDB та PostgreSQL.
 
 ## Основні можливості
 
+- **Інтерактивне консольне меню** — wizard-режим без аргументів (InquirerPy + rich)
 - **Єдина YAML-конфігурація** — всі налаштування в `config.yaml`, секрети окремо в `.env`
 - **CLI аргументи** — гнучке управління через командний рядок
 - **Автоматичні періоди** — 7 варіантів розумних періодів (останні N тижнів, поточний місяць, квартал і т.д.)
@@ -13,8 +14,8 @@
 - **Два методи аутентифікації** — Windows (SSPI) та Логін/Пароль
 - **Шифрування облікових даних** — безпечне зберігання паролів з прив'язкою до машини
 - **Потоковий експорт** — ефективна робота з великими наборами даних
-- **ClickHouse інтеграція** — завантаження експортованих даних у ClickHouse з паралельним імпортом
-- **DuckDB інтеграція** — завантаження даних у DuckDB через REST API з паралельним імпортом
+- **3 аналітичних sink'и** — ClickHouse, DuckDB (REST API), PostgreSQL (COPY FROM STDIN)
+- **Паралельний імпорт XLSX** — єдиний скрипт для всіх sink'ів з thread pool
 
 ## Вимоги
 
@@ -37,9 +38,11 @@ pip install -r requirements.txt
 - `schedule` — планувальник задач
 - `cryptography` — шифрування облікових даних
 - `python-dotenv`, `colorama` — завантаження .env та кольоровий вивід
+- `rich`, `InquirerPy` — інтерактивний консольний UI (панелі, таблиці, fuzzy select)
 - `clickhouse-connect` — завантаження даних у ClickHouse
+- `requests` — DuckDB REST API
+- `psycopg2-binary` — завантаження даних у PostgreSQL (COPY FROM STDIN)
 - `python-calamine` — швидке читання Excel (Rust, 3-10x швидше за openpyxl)
-- `rich` — інтерактивний термінальний UI (progress bar, панелі, таблиці)
 
 ## Швидкий старт
 
@@ -74,14 +77,54 @@ cp config.yaml.example config.yaml
 ### 3. Перший запуск
 
 ```bash
-# Без аргументів — використовує config.yaml + .env
+# Без аргументів — інтерактивне меню
 python olap.py
+
+# З аргументами — CLI режим
+python olap.py --last-weeks 4 --format xlsx
 
 # При першому запуску з LOGIN методом введіть облікові дані —
 # вони будуть зашифровані та збережені автоматично
 ```
 
-## Використання
+## Інтерактивне меню
+
+При запуску без аргументів (`python olap.py`) відкривається консольне меню зі стрілковою навігацією:
+
+```
+┌──────────────────────────────────────┐
+│ OLAP Export Tool                     │
+│ Сервер: 10.40.0.48  ·  Auth: LOGIN  │
+└──────────────────────────────────────┘
+? Оберіть дію:
+❯ Експорт з OLAP куба
+  Імпорт XLSX в аналітику
+  ──────────────
+  Вийти
+```
+
+### Експорт з OLAP куба (wizard)
+
+Покроковий wizard:
+1. Вибір профілю (fuzzy search або пропустити)
+2. Формат (XLSX, CSV, XLSX+CSV, ClickHouse, DuckDB, PostgreSQL)
+3. Тип періоду (останні тижні, поточний місяць, ручний і т.д.)
+4. Значення періоду (кількість тижнів або діапазон YYYY-WW:YYYY-WW)
+5. Стиснення (ZIP або без)
+6. Підтвердження та запуск
+
+### Імпорт XLSX в аналітику (wizard)
+
+Покроковий wizard:
+1. Цільовий sink (ClickHouse, DuckDB, PostgreSQL)
+2. Директорія з XLSX-файлами
+3. Фільтр по року (опційно)
+4. Фільтр по тижню (опційно)
+5. Кількість паралельних воркерів (1–32)
+6. Dry-run режим (опційно)
+7. Підтвердження та запуск
+
+## Використання (CLI)
 
 ### Базові команди
 
@@ -89,7 +132,7 @@ python olap.py
 # Допомога
 python olap.py --help
 
-# Експорт з config.yaml налаштуваннями
+# Інтерактивне меню
 python olap.py
 
 # Очистити збережені облікові дані
@@ -136,7 +179,7 @@ python olap.py --start 2025-01 --end 2025-12
 #### Параметри експорту
 
 ```bash
-# Формат: xlsx, csv або both
+# Формат: xlsx, csv, both, ch, duck, pg
 python olap.py --last-weeks 4 --format both
 
 # Кастомний фільтр
@@ -218,24 +261,20 @@ python olap.py --profile weekly_sales --daemon
 "every 3 days at 14:30"
 ```
 
-## ClickHouse інтеграція
+## Аналітичні sink'и
 
-### Опис
+Інструмент підтримує завантаження даних у три аналітичних бекенди. Всі реалізують спільний інтерфейс `AnalyticsSink` (ABC) з ідемпотентною вставкою (DELETE + INSERT за `year_num + week_num`).
 
-Інструмент підтримує завантаження експортованих XLSX-файлів у ClickHouse. Модуль `olap_tool/clickhouse_export.py` надає повний набір функцій для роботи з ClickHouse, а скрипт `import_xlsx_to_clickhouse.py` забезпечує паралельний пакетний імпорт.
+### ClickHouse
 
-**Ключові особливості:**
-- Ідемпотентна вставка — перед кожним INSERT видаляє дані за `year_num + week_num`
+**Метод:** clickhouse-connect з LZ4 стисненням
+
+**Особливості:**
 - Автоматичне створення БД та таблиці зі схемою з DataFrame
 - Schema evolution — автоматично додає нові колонки через `ALTER TABLE`
-- Thread-local клієнти — одне з'єднання на потік без перевідкриття
-- Кешована схема таблиці — один запит `system.columns` на весь batch
-- Читання Excel через python-calamine (Rust, 3-10x швидше за openpyxl)
+- Thread-local клієнти для паралельного імпорту
 
-### Налаштування
-
-Додайте в `.env` параметри ClickHouse:
-
+**Налаштування (.env):**
 ```bash
 CH_ENABLED=true
 CH_HOST=your-clickhouse-host
@@ -247,45 +286,84 @@ CH_DATABASE=olap_export
 CH_TABLE=sales
 ```
 
-### Пакетний імпорт XLSX → ClickHouse
-
+**Використання:**
 ```bash
-# Імпорт всіх файлів з директорії result/ (4 паралельних воркери)
-python import_xlsx_to_clickhouse.py
-
-# 8 паралельних воркерів
-python import_xlsx_to_clickhouse.py --workers 8
-
-# Тільки 2025 рік
-python import_xlsx_to_clickhouse.py --year 2025
-
-# Конкретний тиждень
-python import_xlsx_to_clickhouse.py --year 2025 --week 10
-
-# Показати файли без завантаження (dry run)
-python import_xlsx_to_clickhouse.py --dry-run
-```
-
-Скрипт відображає прогрес у реальному часі:
-```
-✅ 2025-44    18,486 рядків  0.8с
-✅ 2025-43   143,920 рядків  1.2с
-✅ 2025-42   139,810 рядків  1.1с
-```
-
-### Пряме завантаження під час експорту
-
-Для завантаження у ClickHouse разом з XLSX-експортом налаштуйте в `config.yaml`:
-
-```yaml
-clickhouse:
-  enabled: true
-```
-
-Або через CLI:
-```bash
+# Пряме завантаження під час експорту
 python olap.py --last-weeks 4 --format ch
 ```
+
+### DuckDB (REST API)
+
+**Метод:** HTTP REST API до зовнішнього DuckDB-сервісу
+
+**Особливості:**
+- Відправка даних через REST API (без локального DuckDB клієнта)
+- Автоматичне визначення типів колонок з pandas DataFrame
+- Thread-safe (одна shared сесія для всіх воркерів)
+- Batch INSERT з налаштовуваним batch_size
+
+**Налаштування (.env):**
+```bash
+DUCK_ENABLED=true
+DUCK_URL=https://analytics.lwhs.xyz
+DUCK_API_KEY=<your-key>
+DUCK_TABLE=sales
+DUCK_BATCH_SIZE=1000
+```
+
+**Використання:**
+```bash
+python olap.py --last-weeks 4 --format duck
+```
+
+### PostgreSQL
+
+**Метод:** psycopg2 з `COPY FROM STDIN WITH (FORMAT CSV)`
+
+**Особливості:**
+- Bulk load через COPY (найшвидший метод для PostgreSQL)
+- `\N` як NULL sentinel
+- Schema evolution — автоматично додає нові колонки
+- SSL підключення (за замовчуванням `sslmode=require`)
+- **Не thread-safe** — кожен воркер створює власне з'єднання
+
+**Налаштування (.env):**
+```bash
+PG_ENABLED=true
+PG_HOST=localhost
+PG_PORT=5432
+PG_DATABASE=analytics
+PG_USER=analytics
+PG_PASSWORD=your_password
+PG_SCHEMA=public
+PG_TABLE=sales
+PG_SSL_MODE=require
+```
+
+**Використання:**
+```bash
+python olap.py --last-weeks 4 --format pg
+```
+
+### Пакетний імпорт XLSX
+
+Єдиний скрипт `scripts/import_xlsx.py` імпортує існуючі XLSX-файли у будь-який sink:
+
+```bash
+# ClickHouse (8 паралельних воркерів)
+python scripts/import_xlsx.py --target ch --dir result/ --workers 8
+
+# DuckDB (тільки 2025 рік)
+python scripts/import_xlsx.py --target duck --dir result/ --year 2025
+
+# PostgreSQL (конкретний тиждень)
+python scripts/import_xlsx.py --target pg --dir result/ --year 2025 --week 10
+
+# Показати файли без завантаження (dry run)
+python scripts/import_xlsx.py --target ch --dir result/ --dry-run
+```
+
+Або через інтерактивне меню: `python olap.py` → "Імпорт XLSX в аналітику".
 
 ### Підключення Excel до ClickHouse
 
@@ -312,7 +390,7 @@ python olap.py --last-weeks 4 --format ch
 
 | Файл | Призначення |
 |---|---|
-| `.env` | Секрети: OLAP сервер/БД, автентифікація, ClickHouse підключення |
+| `.env` | Секрети: OLAP сервер/БД, автентифікація, ClickHouse/DuckDB/PostgreSQL підключення |
 | `config.yaml` | Все інше: запити, експорт, форматування, шляхи, відображення |
 | `profiles/*.yaml` | Перевизначення будь-якої секції config.yaml для конкретного сценарію |
 
@@ -324,7 +402,7 @@ query:
   timeout: 30                            # Таймаут між запитами (сек)
 
 export:
-  format: xlsx          # xlsx, csv, both або ch (ClickHouse)
+  format: xlsx          # xlsx, csv, both, ch, duck, pg
   compress: none        # zip або none
   force_csv_only: false # Ігнорувати xlsx навіть якщо вказано
 
@@ -366,7 +444,7 @@ OLAP_CREDENTIALS_ENCRYPTED=true
 OLAP_CREDENTIALS_FILE=.credentials
 OLAP_USE_MASTER_PASSWORD=false
 
-# ClickHouse підключення
+# ClickHouse
 CH_ENABLED=true
 CH_HOST=your-clickhouse-host
 CH_PORT=8443
@@ -375,6 +453,23 @@ CH_PASSWORD=your_password
 CH_SECURE=true
 CH_DATABASE=olap_export
 CH_TABLE=sales
+
+# DuckDB REST API
+DUCK_ENABLED=true
+DUCK_URL=https://analytics.lwhs.xyz
+DUCK_API_KEY=your_key
+DUCK_TABLE=sales
+
+# PostgreSQL
+PG_ENABLED=true
+PG_HOST=localhost
+PG_PORT=5432
+PG_DATABASE=analytics
+PG_USER=analytics
+PG_PASSWORD=your_password
+PG_SCHEMA=public
+PG_TABLE=sales
+PG_SSL_MODE=require
 ```
 
 Повний приклад: [.env.example](.env.example)
@@ -400,65 +495,6 @@ CH_TABLE=sales
 - Автоматичне стиснення після експорту
 - Збереження оригінальних файлів
 - Статистика коефіцієнту стиснення
-
-### ClickHouse
-- Прямий INSERT через clickhouse-connect з LZ4 стисненням
-- Ідемпотентна вставка (DELETE + INSERT за тижнем)
-- Автоматичне створення схеми та schema evolution
-
-## DuckDB інтеграція (REST API)
-
-### Опис
-
-Інструмент підтримує завантаження експортованих даних у DuckDB через REST API. Модуль `olap_tool/sinks.py` містить `DuckDBSink` — реалізацію `AnalyticsSink`, яка відправляє дані через HTTP до DuckDB-сервісу. Скрипт `import_xlsx_to_duckdb.py` забезпечує паралельний пакетний імпорт існуючих XLSX-файлів.
-
-**Ключові особливості:**
-- Відправка даних через REST API (без локального DuckDB клієнта)
-- Ідемпотентна вставка — DELETE + INSERT за `year_num + week_num`
-- Автоматичне визначення типів колонок з pandas DataFrame
-- Thread-safe паралельний імпорт
-- Читання Excel через python-calamine (Rust, 3-10x швидше за openpyxl)
-
-### Налаштування
-
-Додайте в `.env` параметри DuckDB:
-
-```bash
-DUCK_ENABLED=true
-DUCK_URL=https://analytics.lwhs.xyz
-DUCK_API_KEY=<your-key>
-DUCK_TABLE=sales
-```
-
-### Пряме завантаження під час експорту
-
-Для завантаження у DuckDB разом з XLSX-експортом:
-
-```bash
-python olap.py --last-weeks 4 --format duck
-```
-
-Або в `config.yaml`:
-```yaml
-duckdb:
-  enabled: true
-```
-
-### Пакетний імпорт XLSX → DuckDB
-
-```bash
-# Імпорт всіх файлів з директорії result/ (4 паралельних воркери)
-python import_xlsx_to_duckdb.py --workers 4
-
-# Тільки 2025 рік
-python import_xlsx_to_duckdb.py --year 2025
-
-# 8 паралельних воркерів
-python import_xlsx_to_duckdb.py --year 2025 --workers 8
-
-# Показати файли без завантаження (dry run)
-python import_xlsx_to_duckdb.py --dry-run
-```
 
 ## Безпека
 
@@ -517,9 +553,7 @@ result/
 
 ```
 olap-export-tool/
-├── olap.py                        # Точка входу (OLAP експорт)
-├── import_xlsx_to_clickhouse.py   # Паралельний імпорт XLSX → ClickHouse
-├── import_xlsx_to_duckdb.py       # Паралельний імпорт XLSX → DuckDB (REST API)
+├── olap.py                        # Точка входу (без аргументів → меню, з аргументами → CLI)
 ├── .env                           # Секрети (не в git)
 ├── .env.example                   # Приклад секретів
 ├── config.yaml                    # Основна конфігурація
@@ -527,23 +561,40 @@ olap-export-tool/
 ├── requirements.txt               # Python залежності
 │
 ├── olap_tool/                     # Основний пакет
-│   ├── config.py                  # Єдина точка конфігурації (AppConfig + build_config)
-│   ├── cli.py                     # Парсинг CLI аргументів
-│   ├── runner.py                  # Основна логіка оркестрації
-│   ├── queries.py                 # DAX запити та виконання
-│   ├── exporter.py                # Експорт у XLSX/CSV
-│   ├── sinks.py                   # AnalyticsSink ABC, ClickHouseSink, DuckDBSink
-│   ├── clickhouse_export.py       # Завантаження DataFrame у ClickHouse (legacy)
-│   ├── connection.py              # OLAP підключення (ADOMD.NET / OleDb)
-│   ├── auth.py                    # Управління обліковими даними
-│   ├── security.py                # Шифрування (Fernet)
-│   ├── prompt.py                  # Інтерактивний ввід
-│   ├── periods.py                 # Автоматичні періоди (7 типів)
-│   ├── profiles.py                # Завантаження YAML профілів
-│   ├── scheduler.py               # Планувальник задач
-│   ├── compression.py             # ZIP стиснення
-│   ├── progress.py                # Прогрес, таймери, анімації
-│   └── utils.py                   # Утиліти виводу та форматування
+│   ├── core/                      # Ядро
+│   │   ├── cli.py                 # Парсинг CLI аргументів
+│   │   ├── config.py              # Єдина точка конфігурації (AppConfig + build_config)
+│   │   ├── runner.py              # Основна логіка оркестрації
+│   │   ├── periods.py             # Автоматичні періоди (7 типів)
+│   │   ├── profiles.py            # Завантаження YAML профілів
+│   │   ├── scheduler.py           # Планувальник задач
+│   │   ├── compression.py         # ZIP стиснення
+│   │   ├── progress.py            # Прогрес, таймери, анімації
+│   │   └── utils.py               # Утиліти виводу та форматування
+│   │
+│   ├── connection/                # OLAP підключення
+│   │   ├── connection.py          # ADOMD.NET / OleDb через pythonnet
+│   │   ├── auth.py                # Управління обліковими даними
+│   │   ├── security.py            # Шифрування (Fernet)
+│   │   └── prompt.py              # Інтерактивний ввід
+│   │
+│   ├── data/                      # Обробка даних
+│   │   ├── queries.py             # DAX запити та виконання + dispatch у sink'и
+│   │   └── exporter.py            # Експорт у XLSX/CSV
+│   │
+│   ├── sinks/                     # Аналітичні бекенди
+│   │   ├── base.py                # AnalyticsSink ABC + sanitize_df()
+│   │   ├── clickhouse.py          # ClickHouseSink (clickhouse-connect)
+│   │   ├── duckdb.py              # DuckDBSink (REST API)
+│   │   └── postgresql.py          # PostgreSQLSink (psycopg2 COPY)
+│   │
+│   └── ui/                        # Консольний інтерфейс (InquirerPy + rich)
+│       ├── menu.py                # Головне меню (Експорт / Імпорт / Вийти)
+│       ├── olap_export.py         # Wizard експорту
+│       └── xlsx_import.py         # Wizard імпорту XLSX
+│
+├── scripts/
+│   └── import_xlsx.py             # Паралельний імпорт XLSX → будь-який sink
 │
 ├── profiles/                      # Профілі (YAML)
 │   └── weekly_sales.yaml          # Приклад: щотижневий звіт
@@ -590,6 +641,11 @@ pip install PyYAML>=6.0.0
 **"ModuleNotFoundError: No module named 'clickhouse_connect'"**
 ```bash
 pip install clickhouse-connect>=0.7.0
+```
+
+**"ModuleNotFoundError: No module named 'psycopg2'"**
+```bash
+pip install psycopg2-binary>=2.9.0
 ```
 
 ### ODBC підключення до ClickHouse
@@ -663,14 +719,17 @@ python olap.py --last-quarter \
   --compress zip
 ```
 
-### Імпорт архіву Excel у ClickHouse
+### Імпорт архіву XLSX у sink'и
 
 ```bash
-# Повний архів (8 воркерів)
-python import_xlsx_to_clickhouse.py --workers 8
+# ClickHouse (8 воркерів)
+python scripts/import_xlsx.py --target ch --dir result/ --workers 8
 
-# Тільки поточний рік
-python import_xlsx_to_clickhouse.py --year 2025 --workers 4
+# PostgreSQL (тільки 2025 рік)
+python scripts/import_xlsx.py --target pg --dir result/ --year 2025
+
+# DuckDB (dry run)
+python scripts/import_xlsx.py --target duck --dir result/ --dry-run
 ```
 
 ## Додаткова документація
@@ -681,9 +740,11 @@ python import_xlsx_to_clickhouse.py --year 2025 --workers 4
 
 ## Версія
 
-**v3.2** — DuckDB інтеграція: `sinks.py` з `AnalyticsSink` ABC, `DuckDBSink` (REST API), `DuckDBConfig`, паралельний імпортер `import_xlsx_to_duckdb.py`.
+**v4.0** — Консольне інтерактивне меню (InquirerPy + rich), PostgreSQL sink (psycopg2 COPY), реструктуризація пакету (`core/`, `connection/`, `data/`, `sinks/`, `ui/`), єдиний скрипт імпорту `scripts/import_xlsx.py`.
 
-**v3.1** — ClickHouse інтеграція: новий модуль `clickhouse_export.py`, паралельний імпортер `import_xlsx_to_clickhouse.py` з rich UI, ідемпотентна вставка (year_num/week_num), python-calamine.
+**v3.2** — DuckDB інтеграція: `DuckDBSink` (REST API), `DuckDBConfig`, паралельний імпортер.
+
+**v3.1** — ClickHouse інтеграція: `ClickHouseSink`, паралельний імпортер з rich UI, ідемпотентна вставка, python-calamine.
 
 **v3.0** — Єдина YAML-конфігурація, AppConfig dataclass, виправлення багів, видалення dead code.
 
@@ -691,4 +752,4 @@ python import_xlsx_to_clickhouse.py --year 2025 --workers 4
 
 ---
 
-**Дата оновлення:** 9 березня 2026
+**Дата оновлення:** 16 березня 2026
