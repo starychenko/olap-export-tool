@@ -2,7 +2,7 @@
 """
 OLAP Export Tool — точка входу.
 
-Без аргументів → запускає Textual TUI.
+Без аргументів → консольне інтерактивне меню.
 З аргументами → CLI режим.
 """
 import sys
@@ -17,15 +17,8 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 if len(sys.argv) == 1:
-    import os
-    from olap_tool.tui.app import OlapApp
-    try:
-        OlapApp().run()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        # Примусово завершуємо всі фонові потоки (наприклад, завислі запити до БД)
-        os._exit(0)
+    from olap_tool.ui.menu import run
+    run()
 else:
     from olap_tool.core.runner import main
     sys.exit(main())

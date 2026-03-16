@@ -89,32 +89,7 @@ def load_credentials(
                         import getpass
                         from colorama import Fore
 
-                        import sys
-                        if hasattr(sys, "stdout") and hasattr(sys.stdout, "_app"):
-                            # TUI mode
-                            app = getattr(sys.stdout, "_app")
-                            import threading
-                            event = threading.Event()
-                            res_mp = [None]
-                            def show_mp_dialog():
-                                try:
-                                    from olap_tool.tui.screens.credentials import CredentialsDialog
-                                    def cb(res: tuple[str, str] | None):
-                                        if res:
-                                            res_mp[0] = res[1]  # dialog returns (login, pwd)
-                                        event.set()
-                                    dialog = CredentialsDialog(
-                                        message="Введіть майстер-пароль для розшифрування:",
-                                        ask_login=False
-                                    )
-                                    app.push_screen(dialog, cb)
-                                except Exception:
-                                    event.set()
-                            app.call_from_thread(show_mp_dialog)
-                            event.wait()
-                            mp_retry = res_mp[0]
-                        else:
-                            mp_retry = getpass.getpass(
+                        mp_retry = getpass.getpass(
                                 f"{Fore.CYAN}Введіть майстер-пароль для розшифрування: {Fore.RESET}"
                             )
                         base_secret_retry = f"{machine_id}:{mp_retry}" if mp_retry else machine_id
