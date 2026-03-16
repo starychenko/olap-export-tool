@@ -261,8 +261,11 @@ def export_to_clickhouse(
         if schema is None:
             schema = get_table_schema(client, config.database, config.table)
 
-        _log(print_progress, f"Очищення даних за {year}-{week:02d}...")
-        _delete_period(client, config.database, config.table, year, week, schema=schema)
+        # DELETE тільки у standalone режимі (own_client).
+        # У sink режимі DELETE вже виконано через sink.delete_period() у _flush_to_sinks.
+        if own_client:
+            _log(print_progress, f"Очищення даних за {year}-{week:02d}...")
+            _delete_period(client, config.database, config.table, year, week, schema=schema)
 
         df_clean = _align_df_to_table(
             client, config.database, config.table, df_clean, schema=schema

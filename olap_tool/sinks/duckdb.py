@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from .base import AnalyticsSink, sanitize_df
+from .base import AnalyticsSink
 
 if TYPE_CHECKING:
     from ..core.config import DuckDBConfig
@@ -62,10 +62,10 @@ def _to_excel_serial(v) -> int | None:
 
 def _normalize_bigint_date_cols(df: pd.DataFrame, schema: dict[str, str]) -> pd.DataFrame:
     """Конвертує рядкові datetime-колонки у BIGINT-схемі до Excel serial number."""
+    cols_to_convert = []
     for col in df.columns:
         if schema.get(col) != "BIGINT":
             continue
-        # Перевіряємо рядковий dtype (object або pd.StringDtype з calamine)
         dtype_str = str(df[col].dtype)
         if dtype_str not in ("object", "str", "string"):
             continue
@@ -73,13 +73,31 @@ def _normalize_bigint_date_cols(df: pd.DataFrame, schema: dict[str, str]) -> pd.
         if sample.empty:
             continue
         first = sample.iloc[0]
-        if not isinstance(first, str) or not _DT_RE.match(first):
-            continue
-        df = df.copy()
+        if isinstance(first, str) and _DT_RE.match(first):
+            cols_to_convert.append(col)
+
+    if not cols_to_convert:
+        return df
+
+    df = df.copy()
+    for col in cols_to_convert:
         df[col] = df[col].apply(
             lambda v: _to_excel_serial(v) if pd.notna(v) else None
         )
     return df
+
+
+def _numeric_to_str(v):
+    """Конвертує числове значення в рядок (float без .0, NaN/inf → None)."""
+    if pd.isnull(v):
+        return None
+    if isinstance(v, float):
+        import math
+        if not math.isfinite(v):
+            return None
+        if v == int(v):
+            return str(int(v))
+    return str(v)
 
 
 def _align_df_to_schema(df: pd.DataFrame, schema: dict[str, str]) -> pd.DataFrame:
@@ -93,18 +111,7 @@ def _align_df_to_schema(df: pd.DataFrame, schema: dict[str, str]) -> pd.DataFram
         duck_type = schema.get(col, "VARCHAR")
         dtype_str = str(df[col].dtype)
         if duck_type == "VARCHAR" and dtype_str not in ("object", "str", "string"):
-            # int64/float64 → str (напр. articul: 31262066 → '31262066')
-            def _to_str(v):
-                if pd.isnull(v):
-                    return None
-                if isinstance(v, float):
-                    import math
-                    if not math.isfinite(v):
-                        return None
-                    if v == int(v):
-                        return str(int(v))
-                return str(v)
-            df[col] = df[col].apply(_to_str)
+            df[col] = df[col].apply(_numeric_to_str)
     return df
 
 
@@ -243,25 +250,33 @@ class DuckDBSink(AnalyticsSink):
                     data={"table": self._config.table, "mode": "append"},
                     timeout=120,
                 )
-                if not resp.ok:
-                    err = Exception(f"HTTP {resp.status_code}: {resp.text[:500]}")
-                    # 4xx (крім 429 Too Many Requests) — одразу piднімаємо, без retry
-                    if 400 <= resp.status_code < 500 and resp.status_code != 429:
-                        raise err
-                    last_exc = err
-                else:
-                    return resp.json().get("total_rows", 0)
             except Exception as exc:
+                # Мережева помилка — ретраїмо
                 last_exc = exc
+                if attempt < _retries - 1:
+                    _time.sleep(2 ** attempt)
+                continue
+
+            if resp.ok:
+                return resp.json().get("total_rows", 0)
+
+            # 4xx (крім 429) — клієнтська помилка, ретрай не допоможе
+            if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                raise Exception(f"HTTP {resp.status_code}: {resp.text[:500]}")
+
+            # 5xx або 429 — серверна помилка, ретраїмо
+            last_exc = Exception(f"HTTP {resp.status_code}: {resp.text[:500]}")
             if attempt < _retries - 1:
                 _time.sleep(2 ** attempt)
+
         raise last_exc  # type: ignore[misc]
 
     def insert(self, df: pd.DataFrame, year: int, week: int) -> int:
         if df is None or len(df) == 0:
             return 0
 
-        df = sanitize_df(df)  # замінює inf/-inf → NaN перед серіалізацією
+        # sanitize_df НЕ викликаємо — caller (_flush_to_sinks) вже sanitize зробив.
+        # inf/-inf вже замінено на NaN у sanitize_df (base.py).
 
         with self._schema_lock:
             schema = dict(self._schema) if self._schema else {}
