@@ -96,6 +96,7 @@ _PERIOD_LABELS = {
     "current-quarter": "поточний квартал",
     "last-quarter":    "попередній квартал",
     "year-to-date":    "з початку року",
+    "manual":          "ручний діапазон",
 }
 
 
@@ -204,7 +205,7 @@ def run_wizard() -> None:
     finally:
         sys.argv = old_argv
 
-    if result == 0:
+    if (result or 0) == 0:
         console.print("\n[bold green]✓ Завершено успішно[/bold green]")
     else:
         console.print(f"\n[bold red]✗ Завершено з помилкою (код {result})[/bold red]")
