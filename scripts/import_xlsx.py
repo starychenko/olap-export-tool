@@ -154,7 +154,7 @@ def _process_file(
     week: int,
     sink_or_pool,
     sheet,
-    cfg_kwargs: "dict | None" = None,
+    cfg_kwargs: "dict | None" = None,  # потрібен тільки для ThreadLocalSinkPool
 ) -> tuple[int, bool, float]:
     """
     Універсальний воркер для всіх sink-типів.
@@ -177,7 +177,7 @@ def _process_file(
     df["week_num"] = week
 
     sink = (
-        sink_or_pool.get_sink(cfg_kwargs)
+        sink_or_pool.get_sink(cfg_kwargs or {})
         if isinstance(sink_or_pool, ThreadLocalSinkPool)
         else sink_or_pool
     )
