@@ -177,6 +177,7 @@ class DuckDBSink(AnalyticsSink):
         ])
         self._refresh_schema()
         with self._schema_lock:
+            assert self._schema is not None
             schema = dict(self._schema)
         for col in df.columns:
             if col not in schema:
