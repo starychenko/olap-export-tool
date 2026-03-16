@@ -1,30 +1,29 @@
-import sys
 from pathlib import Path
 import time
 import datetime
-from colorama import Fore
-
 from .utils import (
     print_header,
     print_info,
     print_warning,
     print_error,
     print_success,
+    print_progress,
     format_time,
+    format_file_size,
     ensure_dir,
     init_utils,
 )
 from .config import build_config
-from .connection import connect_to_olap, get_connection_string, AUTH_SSPI
-from .queries import get_available_weeks, generate_year_week_pairs, run_dax_query
-from .auth import delete_credentials, get_current_windows_user, auth_username
+from ..connection.connection import connect_to_olap, get_connection_string, AUTH_SSPI
+from ..data.queries import get_available_weeks, generate_year_week_pairs, run_dax_query
+from ..connection.auth import delete_credentials, get_current_windows_user, auth_username
 from .progress import TimeTracker, countdown_timer, init_display
 from .cli import parse_arguments, validate_arguments
 from . import periods
 from .compression import compress_files
 from .profiles import load_profile, print_profiles_list
 from .scheduler import start_scheduler, daemon_mode
-from .sinks import ClickHouseSink, DuckDBSink, PostgreSQLSink
+from ..sinks import ClickHouseSink, DuckDBSink, PostgreSQLSink
 
 
 CURRENT_YEAR = datetime.datetime.now().year
@@ -32,10 +31,9 @@ CURRENT_WEEK = datetime.datetime.now().isocalendar()[1]
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = argv if argv is not None else sys.argv
-
-    # Парсинг CLI аргументів
-    args = parse_arguments()
+    # Парсинг CLI аргументів (argv[1:] якщо передано, інакше sys.argv)
+    cli_argv = argv[1:] if argv is not None else None
+    args = parse_arguments(cli_argv)
 
     # Валідація аргументів
     if not validate_arguments(args):
@@ -105,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         print_error("Не вдалося підключитися до OLAP. Програма завершує роботу.")
         return 1
 
+    sinks: list = []
+    cursor = None
     try:
         available_weeks = get_available_weeks(connection)
 
@@ -206,63 +206,42 @@ def main(argv: list[str] | None = None) -> int:
 
         query_timeout = config.query.timeout
 
-        print_header("OLAP ЕКСПОРТ ДАНИХ - ПОЧАТОК РОБОТИ")
-        print_info("Налаштування:")
-        print(f"   {Fore.CYAN}OLAP сервер:    {Fore.WHITE}{config.secrets.server}")
-        print(f"   {Fore.CYAN}База даних:     {Fore.WHITE}{config.secrets.database}")
-        print(f"   {Fore.CYAN}Фільтр:         {Fore.WHITE}{filter_fg1_name}")
-
         auth_method = config.secrets.auth_method.upper()
         if auth_method == AUTH_SSPI:
-            print(
-                f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Windows (SSPI) як користувач {get_current_windows_user()}"
-            )
+            auth_label = f"Windows (SSPI) як користувач {get_current_windows_user()}"
         else:
             user = auth_username or "Невідомий користувач"
-            print(
-                f"   {Fore.CYAN}Автентифікація: {Fore.WHITE}Логін/пароль як користувач {user} через OleDbConnection"
-            )
+            auth_label = f"Логін/пароль як користувач {user} через OleDbConnection"
 
+        details = {
+            "OLAP сервер": config.secrets.server,
+            "База даних": config.secrets.database,
+            "Фільтр": filter_fg1_name,
+            "Автентифікація": auth_label,
+        }
         if start_period and end_period:
-            print(
-                f"   {Fore.CYAN}Період:         {Fore.WHITE}з {start_period} по {end_period}"
-            )
-            print(f"   {Fore.CYAN}Кількість періодів: {Fore.WHITE}{len(year_week_pairs)}")
-        else:
-            print(f"   {Fore.CYAN}Кількість періодів: {Fore.WHITE}{len(year_week_pairs)}")
-        print(f"   {Fore.CYAN}Таймаут:        {Fore.WHITE}{query_timeout} секунд")
+            details["Період"] = f"з {start_period} по {end_period}"
+        details["Кількість періодів"] = str(len(year_week_pairs))
+        details["Таймаут"] = f"{query_timeout} секунд"
 
         export_format = config.export.format.upper()
 
-        # ClickHouse налаштування
         if config.clickhouse.enabled or export_format in ("CH", "CLICKHOUSE"):
-            print(
-                f"   {Fore.CYAN}ClickHouse:      {Fore.WHITE}{config.clickhouse.host}:{config.clickhouse.port}"
-            )
-            print(
-                f"   {Fore.CYAN}CH Database:     {Fore.WHITE}{config.clickhouse.database}.{config.clickhouse.table}"
-            )
+            details["ClickHouse"] = f"{config.clickhouse.host}:{config.clickhouse.port}"
+            details["CH Database"] = f"{config.clickhouse.database}.{config.clickhouse.table}"
 
-        # DuckDB налаштування
         if config.duckdb.enabled or export_format in ("DUCK", "DUCKDB"):
-            print(
-                f"   {Fore.CYAN}DuckDB:          {Fore.WHITE}{config.duckdb.url}"
-            )
-            print(
-                f"   {Fore.CYAN}DuckDB Table:    {Fore.WHITE}{config.duckdb.table}"
-            )
+            details["DuckDB"] = config.duckdb.url
+            details["DuckDB Table"] = config.duckdb.table
 
-        # PostgreSQL налаштування
         if config.postgresql.enabled or export_format in ("PG", "POSTGRESQL"):
-            print(
-                f"   {Fore.CYAN}PostgreSQL:      {Fore.WHITE}{config.postgresql.host}:{config.postgresql.port}"
-            )
-            print(
-                f"   {Fore.CYAN}PG Table:        {Fore.WHITE}{config.postgresql.schema}.{config.postgresql.table}"
-            )
+            details["PostgreSQL"] = f"{config.postgresql.host}:{config.postgresql.port}"
+            details["PG Table"] = f"{config.postgresql.schema}.{config.postgresql.table}"
+
+        from .utils import print_info_detail
+        print_info_detail("Налаштування:", details)
 
         # Побудова списку активних analytics sinks
-        sinks = []
         if config.clickhouse.enabled or export_format in ("CH", "CLICKHOUSE"):
             sinks.append(ClickHouseSink(config.clickhouse))
         if config.duckdb.enabled or export_format in ("DUCK", "DUCKDB"):
@@ -276,16 +255,20 @@ def main(argv: list[str] | None = None) -> int:
         time_tracker = TimeTracker(len(year_week_pairs), query_timeout=query_timeout, debug=config.display.debug)
         for i, (year, week) in enumerate(year_week_pairs):
             if i > 0:
-                print(f"\n{Fore.YELLOW}{'-' * 40}")
                 print_info(f"Очікування {query_timeout} секунд перед наступним запитом...")
                 time_tracker.start_waiting()
                 countdown_timer(query_timeout)
                 time_tracker.end_waiting()
+
             reporting_period = f"{year}-{week:02d}"
-            print(f"\n{Fore.CYAN}{'-' * 40}")
+            # Прогрес-інфо для 2+ тижня
             if i > 0:
-                print(f"{Fore.MAGENTA}{time_tracker.get_progress_info()}")
-            print_info(f"Обробка тижня: {reporting_period} ({i+1}/{len(year_week_pairs)})")
+                progress_info = time_tracker.get_progress_info()
+                # Форматуємо як однорядковий блок
+                lines = progress_info.strip().split("\n")
+                print_progress(" | ".join(line.strip() for line in lines))
+
+            print_header(f"Тиждень {reporting_period}  ({i+1}/{len(year_week_pairs)})")
             file_path = run_dax_query(
                 connection, reporting_period,
                 config.query, config.export, config.xlsx,
@@ -299,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         # Стиснення файлів якщо вказано compress=zip
         zip_file_path = None
         if config.export.compress == "zip" and files_created:
-            print(f"\n{Fore.CYAN}{'-' * 40}")
+            print_info(f"{'─' * 40}")
             print_info("Стиснення файлів у ZIP архів...")
             if len(year_week_pairs) == 1:
                 zip_file_path = compress_files(files_created, keep_originals=True)
@@ -319,22 +302,16 @@ def main(argv: list[str] | None = None) -> int:
                 if time_tracker.elapsed_times
                 else 0
             )
-            print_info("Деталі часу виконання:")
-            print(
-                f"   {Fore.CYAN}Загальний час:    {Fore.WHITE}{format_time(processing_time)}"
-            )
-            print(
-                f"   {Fore.CYAN}Середній час:    {Fore.WHITE}{format_time(avg_time_per_week)}"
-            )
+            time_details = {
+                "Загальний час": format_time(processing_time),
+                "Середній час": format_time(avg_time_per_week),
+            }
             if time_tracker.elapsed_times:
                 min_time = min(time_tracker.elapsed_times)
                 max_time = max(time_tracker.elapsed_times)
-                print(
-                    f"   {Fore.CYAN}Мінімальний час:  {Fore.WHITE}{format_time(min_time)}"
-                )
-                print(
-                    f"   {Fore.CYAN}Максимальний час: {Fore.WHITE}{format_time(max_time)}"
-                )
+                time_details["Мінімальний час"] = format_time(min_time)
+                time_details["Максимальний час"] = format_time(max_time)
+            print_info_detail("Деталі часу виконання:", time_details)
         else:
             print_success(f"Обробку завершено за {format_time(processing_time)}")
 
@@ -342,19 +319,17 @@ def main(argv: list[str] | None = None) -> int:
         if files_created:
             for i, file_path in enumerate(files_created, 1):
                 path = Path(file_path)
-                file_size_bytes = path.stat().st_size
-                if file_size_bytes < 1024 * 1024:
-                    file_size = f"{file_size_bytes / 1024:.1f} КБ"
-                else:
-                    file_size = f"{file_size_bytes / (1024 * 1024):.2f} МБ"
-                print(
-                    f"   {Fore.CYAN}{i}. {Fore.WHITE}{file_path} {Fore.YELLOW}({file_size})"
-                )
+                file_size = format_file_size(path.stat().st_size)
+                print_info(f"{i}. {file_path} ({file_size})")
         else:
             print_warning("Не було створено жодного файлу")
 
+        if zip_file_path:
+            zip_size = format_file_size(Path(zip_file_path).stat().st_size)
+            print_success(f"ZIP архів: {zip_file_path} ({zip_size})")
+
     finally:
-        for sink in (sinks if 'sinks' in locals() else []):
+        for sink in sinks:
             try:
                 sink.close()
             except Exception:

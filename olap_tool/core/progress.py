@@ -5,10 +5,9 @@ import time
 
 from .utils import format_time, get_current_time
 from colorama import Fore
-from typing import Callable
 
 
-animation_running = False
+animation_stop_event = threading.Event()
 
 # Значення за замовчуванням — перевизначаються через init_display()
 _ascii_mode = False
@@ -149,57 +148,33 @@ class TimeTracker:
         return info
 
 
-def loading_spinner(description: str, estimated_time: float | None = None):
-    global animation_running
-    animation_running = True
+def loading_spinner(description: str):
+    animation_stop_event.clear()
     spinner = itertools.cycle(SPINNER_FRAMES)
     start_time = time.time()
     message = ""
-    while animation_running:
+    while not animation_stop_event.is_set():
         elapsed = time.time() - start_time
         elapsed_str = format_time(elapsed)
         message = f"{Fore.BLUE}[{get_current_time()}] {next(spinner)} {description} | Час: {elapsed_str}"
         sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
         sys.stdout.write(message)
         sys.stdout.flush()
-        time.sleep(0.1)
+        animation_stop_event.wait(0.1)
+    # Очищаємо рядок спінера і переходимо на новий рядок
     sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
     sys.stdout.flush()
 
 
-def streaming_spinner(
-    description: str, stop_event: threading.Event, rows_fn: Callable[[], int],
-    update_interval_ms: int | None = None,
-):
-    """Анімація для стрімінгових експортів з відображенням кількості рядків і часу."""
-    spinner = itertools.cycle(SPINNER_FRAMES)
-    start_time = time.time()
-    last_message = ""
-    interval_ms = update_interval_ms if update_interval_ms is not None else _progress_update_interval_ms
-    interval_ms = max(50, min(500, interval_ms))
-    interval_s = interval_ms / 1000.0
-    while not stop_event.is_set():
-        elapsed_str = format_time(time.time() - start_time)
-        try:
-            rows = rows_fn()
-        except Exception:
-            rows = 0
-        message = f"{Fore.BLUE}[{get_current_time()}] {next(spinner)} {description} | Рядків: {rows} | Час: {elapsed_str}"
-        sys.stdout.write("\r" + " " * (len(last_message) + 2) + "\r")
-        sys.stdout.write(message)
-        sys.stdout.flush()
-        last_message = message
-        time.sleep(interval_s)
-    sys.stdout.write("\r" + " " * (len(last_message) + 2) + "\r")
-    sys.stdout.flush()
-
-
 def countdown_timer(seconds: int):
+    message = ""
     for remaining in range(seconds, 0, -1):
         time_left = format_time(remaining)
-        sys.stdout.write(
-            f"\r{Fore.YELLOW}[{get_current_time()}] {COUNTDOWN_ICON}  Очікування: залишилось {time_left}..."
-        )
+        message = f"{Fore.YELLOW}[{get_current_time()}] {COUNTDOWN_ICON}  Очікування: залишилось {time_left}..."
+        sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
+        sys.stdout.write(message)
         sys.stdout.flush()
         time.sleep(1)
-    print()
+    # Очищаємо рядок countdown
+    sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
+    sys.stdout.flush()

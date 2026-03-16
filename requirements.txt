@@ -11,7 +11,7 @@ colorama>=0.4.4
 
 # Додаткові залежності
 numpy>=1.21.0
-cryptography>=42.0.0  # Для шифрування облікових даних
+cryptography>=42.0.0,<46.0.0  # Для шифрування облікових даних
 
 # Нові функції: Профілі та Планувальник
 PyYAML>=6.0.0  # Для профілів конфігурації (YAML формат)
@@ -19,6 +19,8 @@ schedule>=1.2.0  # Для вбудованого планувальника за
 clickhouse-connect>=0.7.0  # Для завантаження даних у ClickHouse
 requests>=2.28.0           # Для завантаження даних у DuckDB через REST API
 psycopg2-binary>=2.9.0      # Для завантаження даних у PostgreSQL через COPY FROM STDIN
-openpyxl>=3.0.0  # Для читання Excel-файлів (import_xlsx_to_clickhouse.py)
+openpyxl>=3.0.0  # Для читання Excel-файлів (scripts/import_xlsx.py)
 python-calamine>=0.1.7  # Rust-based Excel reader, 3-10x швидший за openpyxl
-rich>=13.0.0  # Красивий термінальний UI: progress bar, панелі, таблиціpyarrow>=14.0.0
+rich>=13.0.0  # Красивий термінальний UI: progress bar, панелі, таблиці
+InquirerPy>=0.3.4  # Консольне інтерактивне меню зі стрілковою навігацією
+pyarrow>=14.0.0

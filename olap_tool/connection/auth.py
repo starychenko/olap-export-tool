@@ -8,7 +8,7 @@ from .security import (
     encrypt_credentials,
     decrypt_credentials,
 )
-from .utils import print_info, print_error
+from ..core.utils import print_info, print_error
 
 
 auth_username: str | None = None
@@ -36,6 +36,10 @@ def save_credentials(
                 f.write(b"\n")
                 f.write(encrypted_data)
         else:
+            print_info(
+                "УВАГА: Облікові дані зберігаються без шифрування. "
+                "Рекомендується встановити CREDENTIALS_ENCRYPTED=true у .env"
+            )
             with open(cred_path, "w") as f:
                 f.write(f"{username}:{password}")
 
@@ -57,14 +61,23 @@ def load_credentials(
     cred_path = Path(credentials_file)
     if not cred_path.exists():
         return None, None
+
+    # Перевіряємо, чи файл не порожній (нульова довжина)
+    if cred_path.stat().st_size == 0:
+        print_error("Файл облікових даних порожний (порожньо). Буде видалено.")
+        return None, None
+
     try:
         if encrypted:
             with open(cred_path, "rb") as f:
                 content = f.read().split(b"\n", 1)
                 if len(content) < 2:
-                    print_error("Невірний формат файлу облікових даних")
+                    print_error("Невірний формат файлу облікових даних (відсутній блок солі). Файл пошкоджено.")
                     return None, None
                 salt, encrypted_data = content
+                if not salt or not encrypted_data:
+                    print_error("Файл облікових даних пошкоджено (порожній сіль або дані). Буде видалено.")
+                    return None, None
                 machine_id = get_machine_id()
                 mp = get_master_password(
                     use_master_password=use_master_password,
@@ -81,8 +94,8 @@ def load_credentials(
                         from colorama import Fore
 
                         mp_retry = getpass.getpass(
-                            f"{Fore.CYAN}Введіть майстер-пароль для розшифрування: {Fore.RESET}"
-                        )
+                                f"{Fore.CYAN}Введіть майстер-пароль для розшифрування: {Fore.RESET}"
+                            )
                         base_secret_retry = f"{machine_id}:{mp_retry}" if mp_retry else machine_id
                         key_retry, _ = generate_encryption_key(base_secret_retry, salt)
                         username, password = decrypt_credentials(
@@ -91,20 +104,25 @@ def load_credentials(
                     except Exception:
                         pass
                 if username and password:
-                    print_info("Облікові дані успішно розшифровано")
                     auth_username = username
                     return username, password
+                # Не вдалося розшифрувати — даємо інформативну пораду
                 print_error(
-                    "Не вдалося розшифрувати облікові дані. Перевірте налаштування майстер-пароля."
+                    "Не вдалося розшифрувати облікові дані. "
+                    "Можливі причини: 1) змінилось ім'я машини/користувача; "
+                    "2) файл пошкоджено; 3) змінився майстер-пароль."
                 )
                 return None, None
         else:
             with open(cred_path, "r") as f:
                 content = f.read().strip()
                 if ":" not in content:
-                    print_error("Невірний формат файлу облікових даних")
+                    print_error("Невірний формат файлу облікових даних (відсутній роздільник ':'). Файл пошкоджено.")
                     return None, None
                 username, password = content.split(":", 1)
+                if not username or not password:
+                    print_error("Файл облікових даних містить порожній логін або пароль.")
+                    return None, None
                 auth_username = username
                 return username, password
     except Exception as e:

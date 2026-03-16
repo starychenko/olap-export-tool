@@ -1,25 +1,28 @@
 """
-ClickHouse Export Module
+ClickHouse sink — поєднує ClickHouseSink та clickhouse_export логіку.
 
-Завантажує DataFrame у ClickHouse:
-  - Автоматично створює базу даних якщо не існує
-  - Автоматично створює таблицю зі схемою з DataFrame якщо не існує
-  - Ідемпотентна вставка: видаляє рядки за (year_num, week_num) перед вставкою
-  - Schema evolution: пропускає колонки яких немає в таблиці,
-    конвертує типи під реальну схему таблиці
+Містить:
+  - _pandas_dtype_to_ch()   — маппінг pandas dtype → ClickHouse тип
+  - ensure_database()       — CREATE DATABASE IF NOT EXISTS
+  - ensure_table()          — CREATE TABLE IF NOT EXISTS зі схемою з DataFrame
+  - get_table_schema()      — читає {col: ch_type} з system.columns
+  - _coerce_col_to_ch_type() — конвертує Series у тип CH-стовпця
+  - _align_df_to_table()    — вирівнює DataFrame під схему таблиці
+  - _delete_period()        — lightweight DELETE за (year_num, week_num)
+  - create_client()         — фабрика clickhouse_connect клієнта
+  - export_to_clickhouse()  — головна функція завантаження
+  - ClickHouseSink          — реалізація AnalyticsSink для ClickHouse
 """
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
 import pandas as pd
 
-from .utils import print_success, print_warning, print_error, print_progress
-from .sinks import sanitize_df, _safe_column_name  # shared utilities
+from .base import AnalyticsSink, sanitize_df
 
 if TYPE_CHECKING:
-    from .config import ClickHouseConfig
+    from ..core.config import ClickHouseConfig
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +104,8 @@ def _coerce_col_to_ch_type(series: pd.Series, ch_type: str) -> pd.Series:
         # Векторизована конвертація: astype(str) → виправляємо NaN-позиції → object
         null_mask = series.isna()
         result = series.astype(str).astype(object)
-        result[null_mask] = None
+        # Nullable(String) → None дозволений; String → заміна на ""
+        result[null_mask] = None if "Nullable" in ch_type else ""
         return result
     if "DateTime" in ch_type or "Date" in ch_type:
         return pd.to_datetime(series, errors="coerce")
@@ -120,6 +124,8 @@ def _align_df_to_table(
 
     schema: якщо передано — не робить зайвий запит до system.columns.
     """
+    from ..core.utils import print_warning
+
     if schema is None:
         schema = get_table_schema(client, database, table)
 
@@ -164,15 +170,12 @@ def _delete_period(
     if schema is None:
         schema = get_table_schema(client, database, table)
 
-    conditions = []
-    if "year_num" in schema:
-        conditions.append(f"year_num = {year}")
-    if "week_num" in schema:
-        conditions.append(f"week_num = {week}")
-
-    if conditions:
-        where = " AND ".join(conditions)
-        client.command(f"DELETE FROM `{database}`.`{table}` WHERE {where}")
+    # Видаляємо тільки якщо обидва ключі є в схемі — інакше ризик знищити весь рік
+    if "year_num" in schema and "week_num" in schema:
+        client.command(
+            f"DELETE FROM `{database}`.`{table}` "
+            f"WHERE year_num = {year} AND week_num = {week}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +229,8 @@ def export_to_clickhouse(
     Returns:
         Кількість завантажених рядків.
     """
+    from ..core.utils import print_success, print_warning, print_error, print_progress
+
     def _log(fn, msg):
         if not silent:
             fn(msg)
@@ -243,7 +248,9 @@ def export_to_clickhouse(
             print_error(f"Не вдалося підключитися до ClickHouse: {e}")
             return 0
 
-    df_clean = sanitize_df(df)
+    # Не викликаємо sanitize_df тут — очікуємо що caller вже sanitize_df зробив.
+    # Якщо викликається напряму (не через sink) — caller відповідає за санітизацію.
+    df_clean = df
 
     try:
         if own_client:
@@ -255,8 +262,11 @@ def export_to_clickhouse(
         if schema is None:
             schema = get_table_schema(client, config.database, config.table)
 
-        _log(print_progress, f"Очищення даних за {year}-{week:02d}...")
-        _delete_period(client, config.database, config.table, year, week, schema=schema)
+        # DELETE тільки у standalone режимі (own_client).
+        # У sink режимі DELETE вже виконано через sink.delete_period() у _flush_to_sinks.
+        if own_client:
+            _log(print_progress, f"Очищення даних за {year}-{week:02d}...")
+            _delete_period(client, config.database, config.table, year, week, schema=schema)
 
         df_clean = _align_df_to_table(
             client, config.database, config.table, df_clean, schema=schema
@@ -287,3 +297,62 @@ def export_to_clickhouse(
                 client.close()
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# ClickHouse sink
+# ---------------------------------------------------------------------------
+
+class ClickHouseSink(AnalyticsSink):
+    """
+    Адаптер навколо clickhouse_export логіки (тепер вбудованої у цей модуль).
+    Підтримує batch-режим: якщо client передано ззовні — не закриває з'єднання.
+    """
+
+    def __init__(self, config: "ClickHouseConfig", client=None, *, silent: bool = False):
+        self._config = config
+        self._client = client          # зовнішній клієнт (batch-режим)
+        self._own_client = client is None
+        self._schema: dict | None = None
+        self._silent = silent
+
+    def setup(self, df: pd.DataFrame) -> None:
+        from ..core.utils import print_progress
+        if self._own_client:
+            if not self._silent:
+                print_progress(
+                    f"Підключення до ClickHouse ({self._config.host}:{self._config.port})..."
+                )
+            self._client = create_client(self._config)
+        ensure_database(self._client, self._config.database)
+        ensure_table(self._client, self._config.database, self._config.table, df)
+        self._schema = get_table_schema(
+            self._client, self._config.database, self._config.table
+        )
+
+    def delete_period(self, year: int, week: int) -> None:
+        _delete_period(
+            self._client, self._config.database, self._config.table,
+            year, week, schema=self._schema,
+        )
+
+    def insert(self, df: pd.DataFrame, year: int, week: int) -> int:
+        if self._schema is None:
+            self._schema = get_table_schema(
+                self._client, self._config.database, self._config.table
+            )
+        return export_to_clickhouse(
+            df, self._config,
+            year=year, week=week,
+            client=self._client,
+            schema=self._schema,
+            silent=self._silent,
+        )
+
+    def close(self) -> None:
+        if self._own_client and self._client is not None:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+            self._client = None

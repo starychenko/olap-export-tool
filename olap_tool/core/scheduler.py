@@ -5,7 +5,6 @@
 Підтримує простий формат розкладу та cron вирази.
 """
 
-import sys
 import time
 import signal
 import datetime
@@ -35,7 +34,6 @@ def signal_handler(signum, frame):
     Обробник сигналу для graceful shutdown.
     """
     global _shutdown_requested
-    print()  # Новий рядок після Ctrl+C
     print_warning("Отримано сигнал завершення. Зупинка планувальника...")
     _shutdown_requested = True
 
@@ -126,21 +124,12 @@ def run_scheduled_task(profile_name: str) -> None:
         profile_name: Назва профілю для виконання
     """
     from .runner import main
-    from .cli import parse_arguments
 
-    print()
     print_info(f"Запуск задачі: {profile_name} о {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
-        # Підготовка аргументів для runner
-        saved_argv = sys.argv.copy()
-        sys.argv = ['olap.py', '--profile', profile_name]
-
-        # Виконання основної функції
-        return_code = main()
-
-        # Відновлення argv
-        sys.argv = saved_argv
+        # Передаємо argv напряму — без мутації sys.argv
+        return_code = main(argv=['olap.py', '--profile', profile_name])
 
         if return_code == 0:
             print_success(f"Задача '{profile_name}' виконана успішно")
@@ -149,10 +138,6 @@ def run_scheduled_task(profile_name: str) -> None:
 
     except Exception as e:
         print_error(f"Помилка виконання задачі '{profile_name}': {e}")
-    finally:
-        # Відновлення argv на випадок помилки
-        if 'saved_argv' in locals():
-            sys.argv = saved_argv
 
 
 def start_scheduler(profile_name: str, schedule_spec: str) -> int:
@@ -196,6 +181,7 @@ def start_scheduler(profile_name: str, schedule_spec: str) -> int:
 
     # Основний цикл планувальника
     global _shutdown_requested
+    _shutdown_requested = False
     while not _shutdown_requested:
         try:
             schedule.run_pending()
@@ -293,13 +279,13 @@ def daemon_mode(profiles: List[str]) -> int:
         for job in schedule.jobs[:5]:  # Показуємо перші 5
             next_run = job.next_run
             if next_run:
-                print(f"  • {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+                print_info(f"  • {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    print()
     print_success("Daemon режим активний. Натисніть Ctrl+C для зупинки")
 
     # Основний цикл
     global _shutdown_requested
+    _shutdown_requested = False
     while not _shutdown_requested:
         try:
             schedule.run_pending()
@@ -316,5 +302,3 @@ def daemon_mode(profiles: List[str]) -> int:
 
     print_info("Daemon режим зупинено")
     return 0
-
-

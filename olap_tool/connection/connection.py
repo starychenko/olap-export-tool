@@ -9,9 +9,10 @@ from .auth import (
     get_current_windows_user,
 )
 from .prompt import prompt_credentials
-from .utils import (
+from ..core.utils import (
     print_info,
     print_info_detail,
+    print_progress,
     print_success,
     print_warning,
     print_error,
@@ -19,11 +20,65 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from .config import SecretsConfig
+    from ..core.config import SecretsConfig
 
 # Константи для методів автентифікації
 AUTH_SSPI = "SSPI"
 AUTH_LOGIN = "LOGIN"
+
+# Ключові слова, що ідентифікують мережеві/серверні помилки (не пов'язані з паролем)
+_NETWORK_ERROR_KEYWORDS = (
+    "timeout",
+    "timed out",
+    "network",
+    "host",
+    "connection refused",
+    "unreachable",
+    "server not found",
+    "server was not found",
+    "cannot open",
+    "no route",
+    "transport",
+    "socket",
+)
+
+# Ключові слова, що ідентифікують явні помилки авторизації
+_AUTH_ERROR_KEYWORDS = (
+    "logon failure",
+    "incorrect password",
+    "access denied",
+    "invalid credentials",
+    "authentication failed",
+    "login failed",
+    "unauthorized",
+    "wrong password",
+    "bad user",
+    "incorrect login",
+)
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    """
+    Визначає, чи є виняток результатом хибної авторизації
+    (невірний логін/пароль), а не мережевої проблеми.
+
+    Повертає True тільки якщо текст помилки явно містить ознаки
+    помилки автентифікації. У всіх інших випадках (включно з невідомими
+    помилками) повертає False, щоб НЕ скасовувати кешований пароль.
+    """
+    msg = str(exc).lower()
+
+    # Якщо в повідомленні є ознака мережевої помилки — точно не auth-помилка
+    if any(kw in msg for kw in _NETWORK_ERROR_KEYWORDS):
+        return False
+
+    # Якщо в повідомленні є явна ознака помилки авторизації
+    if any(kw in msg for kw in _AUTH_ERROR_KEYWORDS):
+        return True
+
+    # За замовчуванням — невідома помилка. НЕ вважаємо, що пароль хибний.
+    return False
+
 
 
 def _escape_conn_str_value(value: str) -> str:
@@ -49,8 +104,8 @@ def init_dotnet_and_providers(adomd_dll_path: str = ""):
             if adomd_dll_path not in sys.path:
                 sys.path.append(adomd_dll_path)
         else:
-            print(
-                "[INIT] Попередження: Шлях ADOMD_DLL_PATH не задано. Перевірте config.yaml або .env"
+            print_warning(
+                "Шлях ADOMD_DLL_PATH не задано. Перевірте config.yaml або .env"
             )
 
         clr.AddReference("Microsoft.AnalysisServices.AdomdClient")  # type: ignore[attr-defined]
@@ -73,7 +128,7 @@ def init_dotnet_and_providers(adomd_dll_path: str = ""):
 
         return Pyadomd, OleDbConnection, OleDbCommand
     except Exception as e:
-        print(f"[INIT] Помилка ініціалізації .NET провайдерів/бібліотек: {e}")
+        print_error(f"Помилка ініціалізації .NET провайдерів/бібліотек: {e}")
         return None, None, None
 
 
@@ -123,14 +178,9 @@ def get_connection_string(secrets: "SecretsConfig"):
             }
         else:
             print_warning(
-                "Облікові дані не вказані. Використовуємо Windows-автентифікацію (SSPI)."
+                "Облікові дані не вказані. Операцію скасовано."
             )
-            connection_string += "Integrated Security=SSPI;"
-            auth_details = {
-                "Метод автентифікації": "Windows-автентифікація (SSPI) - автоматично",
-                "Поточний користувач": get_current_windows_user(),
-                "Причина": "Облікові дані не вказані",
-            }
+            return None, None
     else:
         print_warning(
             f"Невідомий метод автентифікації '{auth_method}'. Використовуємо SSPI."
@@ -153,6 +203,7 @@ class OleDbCursor:
         self.command = None
         self.OleDbCommand = OleDbCommand
         self.description = None
+        self.arraysize = 1  # DB-API 2.0 default
 
     def execute(self, query: str):
         self.command = self.OleDbCommand(query, self.connection)
@@ -170,6 +221,27 @@ class OleDbCursor:
         import System  # type: ignore
 
         while self.reader.Read():
+            row = [
+                (
+                    self.reader.GetValue(i)
+                    if not isinstance(self.reader.GetValue(i), System.DBNull)
+                    else None
+                )
+                for i in range(self.reader.FieldCount)
+            ]
+            rows.append(row)
+        return rows
+
+    def fetchmany(self, size=None):
+        if not self.reader:
+            return []
+        if size is None:
+            size = self.arraysize
+            
+        rows = []
+        import System  # type: ignore
+
+        while len(rows) < size and self.reader.Read():
             row = [
                 (
                     self.reader.GetValue(i)
@@ -199,6 +271,11 @@ class OleDbCursor:
         if self.reader and not self.reader.IsClosed:
             self.reader.Close()
         self.reader = None
+        if self.command is not None:
+            try:
+                self.command.Dispose()
+            except Exception:
+                pass
         self.command = None
 
 
@@ -268,6 +345,9 @@ def connect_to_olap(
     if connection_string is None:
         connection_string, auth_details = get_connection_string(secrets)
 
+    if connection_string is None:
+        return None
+
     if auth_details is None:
         auth_details = {}
     auth_method = auth_details.get("Метод автентифікації", "")
@@ -275,13 +355,11 @@ def connect_to_olap(
     try:
         if "Логін/пароль" in auth_method:
             if Pyadomd is not None:
-                print_info(
-                    "Спроба підключення через Pyadomd (ADOMD.NET) для автентифікації за логіном/паролем"
-                )
+                print_progress(f"Підключення до OLAP сервера {secrets.server}...")
                 try:
                     connection = Pyadomd(connection_string)
                     connection.open()
-                    print_success("Підключення через Pyadomd (ADOMD.NET) успішне")
+                    print_success("Підключення до OLAP сервера встановлено")
                     # Зберігаємо через явні дані
                     username = auth_details.get("_username")
                     password = auth_details.get("_password")
@@ -293,28 +371,42 @@ def connect_to_olap(
                         )
                     return connection
                 except Exception as pyadomd_error:
-                    print_warning(f"Не вдалося підключитися через Pyadomd: {pyadomd_error}")
+                    if _is_auth_error(pyadomd_error):
+                        # Явно хибний логін/пароль: видаляємо кеш і просимо новий
+                        print_warning(f"Помилка автентифікації через Pyadomd: {pyadomd_error}")
+                        print_warning("Кешований пароль хибний. Запит нових облікових даних.")
+                        delete_credentials(credentials_file=secrets.credentials_file)
+                    else:
+                        # Мережева помилка або невідома: НЕ чіпаємо кеш
+                        print_warning(f"Помилка з'єднання через Pyadomd: {pyadomd_error}")
+                        print_warning(
+                            "Схоже на мережеву помилку або збій сервера. Кеш облікових даних збережено."
+                        )
+                        # Спробуємо OleDb як резервний (не через помилку паролю)
+                        if OleDbConnection is not None and OleDbCommand is not None:
+                            print_info("Спробуємо підключення через OleDb як резервний...")
+                            oledb_connection, cursor = connect_using_oledb(
+                                connection_string, auth_details, OleDbConnection, OleDbCommand, secrets
+                            )
+                            if oledb_connection and cursor:
+                                return OleDbConnectionWrapper(oledb_connection, cursor)
+                        print_error("Не вдалося встановити підключення. Перевірте мережу або стан сервера.")
+                        return None
 
-            if OleDbConnection is not None and OleDbCommand is not None:
-                print_info(
-                    "Використовуємо підключення через OleDbConnection для автентифікації за логіном/паролем"
-                )
+            elif OleDbConnection is not None and OleDbCommand is not None:
+                # PyAdomd недоступний, спробуємо лишень OleDb напряму
+                print_info("Pyadomd недоступний. Використовуємо OleDbConnection для автентифікації за логіном/паролем")
                 oledb_connection, cursor = connect_using_oledb(
                     connection_string, auth_details, OleDbConnection, OleDbCommand, secrets
                 )
-
                 if oledb_connection and cursor:
                     return OleDbConnectionWrapper(oledb_connection, cursor)
             else:
-                print_error(
-                    "OleDb провайдер недоступний. Для LOGIN потрібен Pyadomd або MSOLAP (System.Data.OleDb)."
-                )
+                print_error("OleDb провайдер недоступний. Для LOGIN потрібен Pyadomd або MSOLAP (System.Data.OleDb).")
 
+            # Якщо ми тут — або явна auth-помилка, або OleDb теж впав з auth-помилкою
             if retry_count > 0:
-                print_warning(
-                    "Не вдалося підключитися. Спробуйте ввести облікові дані ще раз."
-                )
-                delete_credentials(credentials_file=secrets.credentials_file)
+                print_warning("Не вдалося підключитися. Введіть облікові дані ще раз.")
                 new_username, new_password = prompt_credentials(
                     with_domain=True, domain=secrets.domain
                 )
@@ -338,10 +430,11 @@ def connect_to_olap(
                         secrets, adomd_dll_path,
                         new_connection_string, new_auth_details, retry_count - 1,
                     )
+                else:
+                    print_warning("Авторизацію скасовано.")
+                    return None
 
-            print_error(
-                "Не вдалося встановити підключення через OleDb після повторних спроб."
-            )
+            print_error("Не вдалося встановити підключення після повторних спроб.")
             return None
 
         else:  # Для SSPI
