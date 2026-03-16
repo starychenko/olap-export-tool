@@ -99,12 +99,11 @@ class XlsxStreamWriter:
 
         # Ширина колонок — vectorized через pandas (замість per-cell str())
         if not self.xlsx_config.min_format:
-            for col_idx, col_name in enumerate(df.columns):
-                max_len = df[col_name].astype(str).str.len().max()
-                if pd.notna(max_len):
-                    max_len = int(max_len)
-                    if col_idx not in self.col_max_lengths or max_len > self.col_max_lengths[col_idx]:
-                        self.col_max_lengths[col_idx] = max_len
+            for col_idx in range(len(df.columns)):
+                series = df.iloc[:, col_idx]
+                max_len = int(series.astype(str).str.len().max())
+                if col_idx not in self.col_max_lengths or max_len > self.col_max_lengths[col_idx]:
+                    self.col_max_lengths[col_idx] = max_len
 
         # Конвертуємо DataFrame у list of lists — уникаємо itertuples overhead
         # fillna замінює NaN на "" для xlsxwriter (None в tolist() стає float nan)
