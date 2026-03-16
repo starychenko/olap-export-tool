@@ -164,10 +164,7 @@ def _process_file(
                   або ThreadLocalSinkPool (ClickHouse/PostgreSQL — thread-local).
     """
     t0 = time.monotonic()
-    try:
-        df = _read_excel(file_path, sheet)
-    except Exception:
-        return 0, False, time.monotonic() - t0
+    df = _read_excel(file_path, sheet)
 
     if df.empty:
         return 0, True, time.monotonic() - t0
@@ -182,12 +179,9 @@ def _process_file(
         if isinstance(sink_or_pool, ThreadLocalSinkPool)
         else sink_or_pool
     )
-    try:
-        sink.delete_period(year, week)
-        rows = sink.insert(df, year=year, week=week)
-        return rows, rows >= 0, time.monotonic() - t0
-    except Exception:
-        return 0, False, time.monotonic() - t0
+    sink.delete_period(year, week)
+    rows = sink.insert(df, year=year, week=week)
+    return rows, rows >= 0, time.monotonic() - t0
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +385,8 @@ def main() -> int:
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
             futures = {
                 executor.submit(
-                    _process_file, fp, y, w, sink_or_pool, sheet, cfg_kwargs
+                    _process_file, fp, y, w, sink_or_pool, sheet,
+                    cfg_kwargs if sink_pool is not None else None
                 ): (fp, y, w)
                 for fp, y, w in files
             }

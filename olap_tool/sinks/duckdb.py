@@ -177,7 +177,7 @@ class DuckDBSink(AnalyticsSink):
         ])
         self._refresh_schema()
         with self._schema_lock:
-            schema = dict(self._schema)  # type: ignore[arg-type]
+            schema = dict(self._schema)
         for col in df.columns:
             if col not in schema:
                 dtype = _pandas_dtype_to_duck(df[col].dtype)
