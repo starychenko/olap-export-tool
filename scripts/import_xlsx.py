@@ -357,6 +357,9 @@ def main() -> int:
     console.print(Panel(info, title=target_title, border_style="cyan", expand=False))
     console.print()
 
+    _ch_cfg_kwargs: dict = {}
+    _pg_cfg_kwargs: dict = {}
+
     # ── Пошук файлів ───────────────────────────────────────────────────────
     files = find_xlsx_files(base_dir, args.year, args.week)
     if not files:

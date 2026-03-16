@@ -131,9 +131,9 @@ def run_scheduled_task(profile_name: str) -> None:
     print()
     print_info(f"Запуск задачі: {profile_name} о {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
+    saved_argv: list = sys.argv.copy()
     try:
         # Підготовка аргументів для runner
-        saved_argv = sys.argv.copy()
         sys.argv = ['olap.py', '--profile', profile_name]
 
         # Виконання основної функції
@@ -151,8 +151,7 @@ def run_scheduled_task(profile_name: str) -> None:
         print_error(f"Помилка виконання задачі '{profile_name}': {e}")
     finally:
         # Відновлення argv на випадок помилки
-        if 'saved_argv' in locals():
-            sys.argv = saved_argv
+        sys.argv = saved_argv
 
 
 def start_scheduler(profile_name: str, schedule_spec: str) -> int:

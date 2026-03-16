@@ -105,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         print_error("Не вдалося підключитися до OLAP. Програма завершує роботу.")
         return 1
 
+    sinks: list = []
     try:
         available_weeks = get_available_weeks(connection)
 
@@ -354,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
             print_warning("Не було створено жодного файлу")
 
     finally:
-        for sink in (sinks if 'sinks' in locals() else []):
+        for sink in sinks:
             try:
                 sink.close()
             except Exception:

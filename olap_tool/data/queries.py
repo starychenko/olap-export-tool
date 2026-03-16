@@ -309,7 +309,7 @@ def run_dax_query(
         return None
     finally:
         # Закриваємо курсор, щоб звільнити XmlReader на з'єднанні
-        if 'cursor' in locals() and cursor is not None:
+        if cursor is not None:
             try:
                 cursor.close()
             except Exception:
@@ -340,6 +340,7 @@ def get_available_weeks(connection):
             'Calendar'[week_num] ASC
         /* END QUERY BUILDER */
     """
+    cursor = None
     try:
         cursor = connection.cursor()
         cursor.execute(query)
