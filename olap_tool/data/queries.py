@@ -12,6 +12,7 @@ from ..core.utils import (
     print_progress,
     print_success,
     format_time,
+    format_file_size,
     convert_dotnet_to_python,
     ensure_dir,
 )
@@ -300,10 +301,7 @@ def run_dax_query(
                 csv_writer.close()
                 file_size_bytes = Path(filepath).stat().st_size
 
-            if file_size_bytes < 1024 * 1024:
-                file_size = f"{file_size_bytes / 1024:.1f} КБ"
-            else:
-                file_size = f"{file_size_bytes / (1024 * 1024):.2f} МБ"
+            file_size = format_file_size(file_size_bytes)
             print_success(
                 f"Дані експортовано у файл: {Fore.WHITE}{filepath} {Fore.YELLOW}({file_size}, {total_rows} рядків)"
             )

@@ -68,58 +68,45 @@ except ImportError:
     _EXCEL_ENGINE = "openpyxl"
 
 # ---------------------------------------------------------------------------
-# Thread-local сховище для ClickHouse (одне з'єднання на потік)
+# Thread-local sink pool (одне з'єднання на потік для не-thread-safe sinks)
 # ---------------------------------------------------------------------------
-_ch_local = threading.local()
-_ch_all_sinks: list = []
-_ch_sinks_lock = threading.Lock()
-_ch_setup_df: "Optional[pd.DataFrame]" = None  # зберігається під час init
 
+class ThreadLocalSinkPool:
+    """Пул thread-local sinks для паралельного завантаження.
 
-def _get_ch_sink(cfg_kwargs: dict):
-    """Повертає thread-local ClickHouseSink.
-
-    setup() викликається для кожного нового sink — операція ідемпотентна
-    (CREATE TABLE IF NOT EXISTS), але необхідна для ініціалізації self._client.
+    Для кожного потоку створює окремий sink-екземпляр і зберігає
+    посилання для cleanup після завершення всіх задач.
+    setup() ідемпотентний (CREATE TABLE IF NOT EXISTS).
     """
-    if not hasattr(_ch_local, "sink") or _ch_local.sink is None:
-        from olap_tool.sinks import ClickHouseSink
-        from olap_tool.core.config import ClickHouseConfig
-        sink = ClickHouseSink(ClickHouseConfig(**cfg_kwargs))
-        if _ch_setup_df is not None:
-            sink.setup(_ch_setup_df)  # ідемпотентно; ініціалізує self._client
-        _ch_local.sink = sink
-        with _ch_sinks_lock:
-            _ch_all_sinks.append(sink)
-    return _ch_local.sink
 
+    def __init__(self, sink_class, config_class):
+        self._sink_class = sink_class
+        self._config_class = config_class
+        self._local = threading.local()
+        self._all_sinks: list = []
+        self._lock = threading.Lock()
+        self._setup_df: Optional[pd.DataFrame] = None
 
-# ---------------------------------------------------------------------------
-# Thread-local сховище для PostgreSQL (одне з'єднання на потік)
-# PostgreSQLSink НЕ є thread-safe — psycopg2 з'єднання не можна шерити між потоками
-# ---------------------------------------------------------------------------
-_pg_local = threading.local()
-_pg_all_sinks: list = []
-_pg_sinks_lock = threading.Lock()
-_pg_setup_df: "Optional[pd.DataFrame]" = None  # зберігається під час init
+    def set_setup_df(self, df: pd.DataFrame) -> None:
+        self._setup_df = df
 
+    def get_sink(self, cfg_kwargs: dict):
+        """Повертає thread-local sink, створює новий якщо потрібно."""
+        if not hasattr(self._local, "sink") or self._local.sink is None:
+            sink = self._sink_class(self._config_class(**cfg_kwargs))
+            if self._setup_df is not None:
+                sink.setup(self._setup_df)
+            self._local.sink = sink
+            with self._lock:
+                self._all_sinks.append(sink)
+        return self._local.sink
 
-def _get_pg_sink(cfg_kwargs: dict):
-    """Повертає thread-local PostgreSQLSink.
-
-    setup() викликається для кожного нового sink — операція ідемпотентна
-    (CREATE TABLE IF NOT EXISTS), але необхідна для встановлення з'єднання.
-    """
-    if not hasattr(_pg_local, "sink") or _pg_local.sink is None:
-        from olap_tool.sinks import PostgreSQLSink
-        from olap_tool.core.config import PostgreSQLConfig
-        sink = PostgreSQLSink(PostgreSQLConfig(**cfg_kwargs))
-        if _pg_setup_df is not None:
-            sink.setup(_pg_setup_df)  # ідемпотентно; ініціалізує з'єднання
-        _pg_local.sink = sink
-        with _pg_sinks_lock:
-            _pg_all_sinks.append(sink)
-    return _pg_local.sink
+    def close_all(self) -> None:
+        for sink in self._all_sinks:
+            try:
+                sink.close()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -158,19 +145,22 @@ def _read_excel(file_path: Path, sheet) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Workers
+# Generic worker
 # ---------------------------------------------------------------------------
 
-def _process_ch(
+def _process_file(
     file_path: Path,
     year: int,
     week: int,
-    cfg_kwargs: dict,
+    sink_or_pool,
     sheet,
+    cfg_kwargs: "dict | None" = None,
 ) -> tuple[int, bool, float]:
     """
-    Воркер для ClickHouse.
-    Кожен потік отримує власний sink через thread-local storage.
+    Універсальний воркер для всіх sink-типів.
+
+    sink_or_pool: або sink напряму (DuckDB — thread-safe),
+                  або ThreadLocalSinkPool (ClickHouse/PostgreSQL — thread-local).
     """
     t0 = time.monotonic()
     try:
@@ -186,80 +176,15 @@ def _process_ch(
     df["year_num"] = year
     df["week_num"] = week
 
-    sink = _get_ch_sink(cfg_kwargs)
+    sink = (
+        sink_or_pool.get_sink(cfg_kwargs)
+        if isinstance(sink_or_pool, ThreadLocalSinkPool)
+        else sink_or_pool
+    )
     try:
         sink.delete_period(year, week)
         rows = sink.insert(df, year=year, week=week)
         return rows, rows >= 0, time.monotonic() - t0
-    except Exception:
-        return 0, False, time.monotonic() - t0
-
-
-def _process_pg(
-    file_path: Path,
-    year: int,
-    week: int,
-    cfg_kwargs: dict,
-    sheet,
-) -> tuple[int, bool, float]:
-    """
-    Воркер для PostgreSQL.
-    Кожен потік отримує власний sink через thread-local storage,
-    оскільки PostgreSQLSink НЕ є thread-safe.
-    """
-    t0 = time.monotonic()
-    try:
-        df = _read_excel(file_path, sheet)
-    except Exception:
-        return 0, False, time.monotonic() - t0
-
-    if df.empty:
-        return 0, True, time.monotonic() - t0
-
-    from olap_tool.sinks import sanitize_df
-    df = sanitize_df(df)
-    df["year_num"] = year
-    df["week_num"] = week
-
-    sink = _get_pg_sink(cfg_kwargs)
-    try:
-        sink.delete_period(year, week)
-        rows = sink.insert(df, year=year, week=week)
-        return rows, rows >= 0, time.monotonic() - t0
-    except Exception:
-        return 0, False, time.monotonic() - t0
-
-
-def _process_shared(
-    file_path: Path,
-    year: int,
-    week: int,
-    sink,
-    sheet,
-) -> tuple[int, bool, float]:
-    """
-    Воркер для DuckDB.
-    Використовує один спільний sink (внутрішня реалізація thread-safe).
-    """
-    t0 = time.monotonic()
-    try:
-        df = _read_excel(file_path, sheet)
-    except Exception:
-        return 0, False, time.monotonic() - t0
-
-    if df.empty:
-        return 0, True, time.monotonic() - t0
-
-    from olap_tool.sinks import sanitize_df
-    df = sanitize_df(df)
-    df["year_num"] = year
-    df["week_num"] = week
-
-    try:
-        sink.delete_period(year, week)
-        rows = sink.insert(df, year=year, week=week)
-        success = rows > 0 or df.empty
-        return rows, success, time.monotonic() - t0
     except Exception:
         return 0, False, time.monotonic() - t0
 
@@ -357,8 +282,9 @@ def main() -> int:
     console.print(Panel(info, title=target_title, border_style="cyan", expand=False))
     console.print()
 
-    _ch_cfg_kwargs: dict = {}
-    _pg_cfg_kwargs: dict = {}
+    sink_pool: "ThreadLocalSinkPool | None" = None
+    sink = None  # shared sink (DuckDB)
+    cfg_kwargs: dict = {}
 
     # ── Пошук файлів ───────────────────────────────────────────────────────
     files = find_xlsx_files(base_dir, args.year, args.week)
@@ -388,61 +314,48 @@ def main() -> int:
                     init_file_idx = _i
                     break
 
-            if target == "clickhouse":
-                from olap_tool.sinks import ClickHouseSink, sanitize_df
-                from olap_tool.core.config import ClickHouseConfig
+            from olap_tool.sinks import sanitize_df
 
-                # Зберігаємо cfg як dict для передачі у thread-local фабрику
-                _ch_cfg_kwargs = {
-                    f.name: getattr(cfg, f.name) for f in dc_fields(cfg)
-                }
-                # Ініціалізаційний sink (не thread-local — тільки для setup)
-                init_sink = ClickHouseSink(ClickHouseConfig(**_ch_cfg_kwargs))
-                if not df_init.empty:
-                    df_init_clean = sanitize_df(df_init.copy())
-                    df_init_clean["year_num"] = files[init_file_idx][1]
-                    df_init_clean["week_num"] = files[init_file_idx][2]
+            # Підготовка init DataFrame для CREATE TABLE
+            df_init_clean = None
+            if not df_init.empty:
+                df_init_clean = sanitize_df(df_init.copy())
+                df_init_clean["year_num"] = files[init_file_idx][1]
+                df_init_clean["week_num"] = files[init_file_idx][2]
+
+            if target == "clickhouse":
+                from olap_tool.sinks import ClickHouseSink
+                from olap_tool.core.config import ClickHouseConfig
+                cfg_kwargs = {f.name: getattr(cfg, f.name) for f in dc_fields(cfg)}
+                sink_pool = ThreadLocalSinkPool(ClickHouseSink, ClickHouseConfig)
+                # Ініціалізаційний setup через тимчасовий sink
+                init_sink = ClickHouseSink(ClickHouseConfig(**cfg_kwargs))
+                if df_init_clean is not None:
                     init_sink.setup(df_init_clean)
-                    # Зберігаємо df для ініціалізації thread-local sinks
-                    global _ch_setup_df
-                    _ch_setup_df = df_init_clean
+                    sink_pool.set_setup_df(df_init_clean)
                 init_sink.close()
-                sink = None  # воркери використовують thread-local sinks
 
             elif target == "duckdb":
-                from olap_tool.sinks import DuckDBSink, sanitize_df
+                from olap_tool.sinks import DuckDBSink
                 from olap_tool.core.config import DuckDBConfig
                 if not isinstance(cfg, DuckDBConfig):
                     raise TypeError(f"Очікувався DuckDBConfig, отримано {type(cfg).__name__}")
                 sink = DuckDBSink(cfg)
-                if not df_init.empty:
-                    df_init_clean = sanitize_df(df_init.copy())
-                    df_init_clean["year_num"] = files[init_file_idx][1]
-                    df_init_clean["week_num"] = files[init_file_idx][2]
+                if df_init_clean is not None:
                     sink.setup(df_init_clean)
 
             else:  # postgresql
-                from olap_tool.sinks import PostgreSQLSink, sanitize_df
+                from olap_tool.sinks import PostgreSQLSink
                 from olap_tool.core.config import PostgreSQLConfig
-
                 if not isinstance(cfg, PostgreSQLConfig):
                     raise TypeError(f"Очікувався PostgreSQLConfig, отримано {type(cfg).__name__}")
-                # Зберігаємо cfg як dict для передачі у thread-local фабрику
-                _pg_cfg_kwargs = {
-                    f.name: getattr(cfg, f.name) for f in dc_fields(cfg)
-                }
-                # Ініціалізаційний sink (не thread-local — тільки для setup)
+                cfg_kwargs = {f.name: getattr(cfg, f.name) for f in dc_fields(cfg)}
+                sink_pool = ThreadLocalSinkPool(PostgreSQLSink, PostgreSQLConfig)
                 init_sink = PostgreSQLSink(cfg)
-                if not df_init.empty:
-                    df_init_clean = sanitize_df(df_init.copy())
-                    df_init_clean["year_num"] = files[init_file_idx][1]
-                    df_init_clean["week_num"] = files[init_file_idx][2]
+                if df_init_clean is not None:
                     init_sink.setup(df_init_clean)
-                    # Зберігаємо df для ініціалізації thread-local sinks
-                    global _pg_setup_df
-                    _pg_setup_df = df_init_clean
+                    sink_pool.set_setup_df(df_init_clean)
                 init_sink.close()
-                sink = None  # воркери використовують thread-local sinks
 
         except Exception as e:
             console.print(f"[red]❌ Помилка ініціалізації: {e}[/red]")
@@ -470,29 +383,17 @@ def main() -> int:
     )
     task_id = progress.add_task("", total=total)
 
+    # sink_or_pool: або ThreadLocalSinkPool (CH/PG), або sink напряму (DuckDB)
+    sink_or_pool = sink_pool if sink_pool is not None else sink
+
     with progress:
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
-            if target == "clickhouse":
-                futures = {
-                    executor.submit(
-                        _process_ch, fp, y, w, _ch_cfg_kwargs, sheet
-                    ): (fp, y, w)
-                    for fp, y, w in files
-                }
-            elif target == "postgresql":
-                futures = {
-                    executor.submit(
-                        _process_pg, fp, y, w, _pg_cfg_kwargs, sheet
-                    ): (fp, y, w)
-                    for fp, y, w in files
-                }
-            else:
-                futures = {
-                    executor.submit(
-                        _process_shared, fp, y, w, sink, sheet
-                    ): (fp, y, w)
-                    for fp, y, w in files
-                }
+            futures = {
+                executor.submit(
+                    _process_file, fp, y, w, sink_or_pool, sheet, cfg_kwargs
+                ): (fp, y, w)
+                for fp, y, w in files
+            }
 
             for future in as_completed(futures):
                 fp, y, w = futures[future]
@@ -530,26 +431,13 @@ def main() -> int:
                 )
 
     # ── Закриваємо з'єднання ───────────────────────────────────────────────
-    if target == "clickhouse":
-        # Закриваємо всі thread-local sinks
-        for s in _ch_all_sinks:
-            try:
-                s.close()
-            except Exception:
-                pass
-    elif target == "postgresql":
-        # Закриваємо всі thread-local sinks
-        for s in _pg_all_sinks:
-            try:
-                s.close()
-            except Exception:
-                pass
-    else:
-        if sink is not None:
-            try:
-                sink.close()
-            except Exception:
-                pass
+    if sink_pool is not None:
+        sink_pool.close_all()
+    elif sink is not None:
+        try:
+            sink.close()
+        except Exception:
+            pass
 
     # ── Підсумок ───────────────────────────────────────────────────────────
     elapsed_total = time.monotonic() - start_time

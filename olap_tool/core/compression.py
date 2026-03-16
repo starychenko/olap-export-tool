@@ -7,7 +7,7 @@ import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from .utils import print_info, print_success, print_warning, print_error
+from .utils import print_info, print_success, print_warning, print_error, format_file_size
 
 
 def compress_files(
@@ -66,8 +66,8 @@ def compress_files(
         compressed_size = output_path_obj.stat().st_size
         compression_ratio = (1 - compressed_size / total_original_size) * 100 if total_original_size > 0 else 0
 
-        original_size_str = _format_file_size(total_original_size)
-        compressed_size_str = _format_file_size(compressed_size)
+        original_size_str = format_file_size(total_original_size)
+        compressed_size_str = format_file_size(compressed_size)
 
         print_success(f"Створено архів: {output_path}")
         print_info(f"  Файлів у архіві: {file_count}")
@@ -94,13 +94,3 @@ def compress_files(
                 pass
         return None
 
-
-def _format_file_size(size_bytes: int) -> str:
-    if size_bytes < 1024:
-        return f"{size_bytes} Б"
-    elif size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f} КБ"
-    elif size_bytes < 1024 * 1024 * 1024:
-        return f"{size_bytes / (1024 * 1024):.2f} МБ"
-    else:
-        return f"{size_bytes / (1024 * 1024 * 1024):.2f} ГБ"

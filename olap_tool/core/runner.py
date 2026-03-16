@@ -8,6 +8,7 @@ from .utils import (
     print_error,
     print_success,
     format_time,
+    format_file_size,
     ensure_dir,
     init_utils,
 )
@@ -315,11 +316,7 @@ def main(argv: list[str] | None = None) -> int:
         if files_created:
             for i, file_path in enumerate(files_created, 1):
                 path = Path(file_path)
-                file_size_bytes = path.stat().st_size
-                if file_size_bytes < 1024 * 1024:
-                    file_size = f"{file_size_bytes / 1024:.1f} КБ"
-                else:
-                    file_size = f"{file_size_bytes / (1024 * 1024):.2f} МБ"
+                file_size = format_file_size(path.stat().st_size)
                 print_info(f"{i}. {file_path} ({file_size})")
         else:
             print_warning("Не було створено жодного файлу")

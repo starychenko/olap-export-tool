@@ -165,32 +165,31 @@ def load_secrets_from_env() -> SecretsConfig:
     )
 
 
+def _env_int(key: str, default: int) -> int:
+    """Читає int з os.environ з fallback на default."""
+    try:
+        return int(os.getenv(key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
 def load_duckdb_from_env() -> DuckDBConfig:
     """Читає налаштування DuckDB REST API з os.environ."""
-    try:
-        batch_size = int(os.getenv("DUCK_BATCH_SIZE", "1000"))
-    except (ValueError, TypeError):
-        batch_size = 1000
     return DuckDBConfig(
         enabled=_parse_bool(os.getenv("DUCK_ENABLED", "false"), False),
         url=os.getenv("DUCK_URL", "https://analytics.lwhs.xyz"),
         api_key=os.getenv("DUCK_API_KEY", ""),
         table=os.getenv("DUCK_TABLE", "sales"),
-        batch_size=batch_size,
+        batch_size=_env_int("DUCK_BATCH_SIZE", 1000),
     )
 
 
 def load_clickhouse_from_env() -> ClickHouseConfig:
     """Читає налаштування ClickHouse з os.environ."""
-    ch_port_raw = os.getenv("CH_PORT", "443")
-    try:
-        ch_port = int(ch_port_raw)
-    except (ValueError, TypeError):
-        ch_port = 443
     return ClickHouseConfig(
         enabled=_parse_bool(os.getenv("CH_ENABLED", "false"), False),
         host=os.getenv("CH_HOST", "localhost"),
-        port=ch_port,
+        port=_env_int("CH_PORT", 443),
         username=os.getenv("CH_USERNAME", "default"),
         password=os.getenv("CH_PASSWORD", ""),
         secure=_parse_bool(os.getenv("CH_SECURE", "true"), True),
@@ -201,14 +200,10 @@ def load_clickhouse_from_env() -> ClickHouseConfig:
 
 def load_postgres_from_env() -> PostgreSQLConfig:
     """Читає налаштування PostgreSQL з os.environ."""
-    try:
-        pg_port = int(os.getenv("PG_PORT", "5432"))
-    except (ValueError, TypeError):
-        pg_port = 5432
     return PostgreSQLConfig(
         enabled=_parse_bool(os.getenv("PG_ENABLED", "false"), False),
         host=os.getenv("PG_HOST", "localhost"),
-        port=pg_port,
+        port=_env_int("PG_PORT", 5432),
         database=os.getenv("PG_DATABASE", "analytics"),
         user=os.getenv("PG_USER", "analytics"),
         password=os.getenv("PG_PASSWORD", ""),

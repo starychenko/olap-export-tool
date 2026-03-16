@@ -106,6 +106,18 @@ def print_progress(text: str):
     print(f"{Fore.BLUE}[{get_current_time()}] {ICON_PROGRESS} {text}")
 
 
+def format_file_size(size_bytes: int) -> str:
+    """Форматує розмір файлу у зручну форму (Б/КБ/МБ/ГБ)."""
+    if size_bytes < 1024:
+        return f"{size_bytes} Б"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} КБ"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.2f} МБ"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.2f} ГБ"
+
+
 def format_time(seconds: float):
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
