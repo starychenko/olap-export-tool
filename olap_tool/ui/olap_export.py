@@ -49,7 +49,7 @@ def _list_profiles() -> list[Choice]:
 
 
 def _load_profile_defaults(profile_name: str) -> dict[str, Any]:
-    """Читає профіль і повертає defaults для wizard (format, period_type, period_value, compress)."""
+    """Читає профіль і повертає наявні параметри (format, period_type, period_value, compress)."""
     defaults: dict[str, Any] = {}
     if not profile_name:
         return defaults
@@ -89,7 +89,7 @@ def _load_profile_defaults(profile_name: str) -> dict[str, Any]:
     return defaults
 
 
-# ─── Wizard ──────────────────────────────────────────────────────────────────
+# ─── Choices ─────────────────────────────────────────────────────────────────
 
 FORMAT_CHOICES = [
     Choice(value="xlsx",       name="XLSX"),
@@ -131,6 +131,8 @@ _PERIOD_LABELS = {
 }
 
 
+# ─── Wizard ──────────────────────────────────────────────────────────────────
+
 def run_wizard() -> None:
     """Інтерактивний wizard OLAP Export."""
     console.rule("[cyan]Експорт з OLAP куба[/cyan]")
@@ -143,57 +145,57 @@ def run_wizard() -> None:
         max_height="40%",
     ).execute()
 
-    # Читаємо defaults з профілю для pre-populate наступних кроків
-    p_defaults = _load_profile_defaults(profile)
+    # Читаємо параметри з профілю
+    p = _load_profile_defaults(profile)
 
-    # 2. Формат (default з профілю або xlsx)
-    fmt_default = p_defaults.get("format", "xlsx")
-    if fmt_default not in _FORMAT_VALUES:
-        fmt_default = "xlsx"
-    fmt: str = inquirer.select(
-        message="Формат виводу:",
-        choices=FORMAT_CHOICES,
-        default=fmt_default,
-    ).execute()
+    # Якщо профіль визначає параметр — використовуємо його без питань.
+    # Питаємо тільки те, чого в профілі немає.
 
-    # 3. Тип періоду (default з профілю або last-weeks)
-    period_default = p_defaults.get("period_type", "last-weeks")
-    if period_default not in _PERIOD_VALUES:
-        period_default = "last-weeks"
-    period_type: str = inquirer.select(
-        message="Тип періоду:",
-        choices=PERIOD_CHOICES,
-        default=period_default,
-    ).execute()
-
-    # 4. Значення (тільки для last-weeks і manual)
-    period_value: str = ""
-    if period_type == "last-weeks":
-        weeks_default = p_defaults.get("period_value", "4") if period_type == p_defaults.get("period_type") else "4"
-        period_value = inquirer.text(
-            message="Кількість тижнів:",
-            default=weeks_default,
-            validate=WeeksValidator(),
-        ).execute()
-    elif period_type == "manual":
-        manual_default = p_defaults.get("period_value", "") if period_type == p_defaults.get("period_type") else ""
-        period_value = inquirer.text(
-            message="Діапазон (YYYY-WW:YYYY-WW):",
-            default=manual_default,
-            validate=ManualPeriodValidator(),
+    # 2. Формат
+    if "format" in p and p["format"] in _FORMAT_VALUES:
+        fmt = p["format"]
+    else:
+        fmt = inquirer.select(
+            message="Формат виводу:",
+            choices=FORMAT_CHOICES,
+            default="xlsx",
         ).execute()
 
-    # 5. Стиснення (default з профілю або none)
-    compress_default = p_defaults.get("compress", "none")
-    if compress_default not in ("none", "zip"):
-        compress_default = "none"
-    compress: str = inquirer.select(
-        message="Стиснення:",
-        choices=COMPRESS_CHOICES,
-        default=compress_default,
-    ).execute()
+    # 3. Період
+    if "period_type" in p and p["period_type"] in _PERIOD_VALUES:
+        period_type = p["period_type"]
+        period_value = p.get("period_value", "")
+    else:
+        period_type = inquirer.select(
+            message="Тип періоду:",
+            choices=PERIOD_CHOICES,
+            default="last-weeks",
+        ).execute()
 
-    # 6. Підсумок
+        period_value = ""
+        if period_type == "last-weeks":
+            period_value = inquirer.text(
+                message="Кількість тижнів:",
+                default="4",
+                validate=WeeksValidator(),
+            ).execute()
+        elif period_type == "manual":
+            period_value = inquirer.text(
+                message="Діапазон (YYYY-WW:YYYY-WW):",
+                validate=ManualPeriodValidator(),
+            ).execute()
+
+    # 4. Стиснення
+    if "compress" in p and p["compress"] in ("none", "zip"):
+        compress = p["compress"]
+    else:
+        compress = inquirer.select(
+            message="Стиснення:",
+            choices=COMPRESS_CHOICES,
+            default="none",
+        ).execute()
+
+    # 5. Підсумок
     period_label = _PERIOD_LABELS.get(period_type, period_type)
     if period_value:
         period_label = f"{period_label} ({period_value})"
@@ -205,7 +207,7 @@ def run_wizard() -> None:
     }
     show_summary(summary)
 
-    # 7. Підтвердження
+    # 6. Підтвердження
     confirmed: bool = inquirer.confirm(
         message="Запустити?",
         default=True,
@@ -215,7 +217,7 @@ def run_wizard() -> None:
         console.print("[yellow]Скасовано.[/yellow]")
         return
 
-    # 8. Будуємо argv і запускаємо
+    # 7. Будуємо argv і запускаємо
     argv = ["olap.py"]
     if profile:
         argv += ["--profile", profile]
