@@ -104,7 +104,6 @@ def load_credentials(
                     except Exception:
                         pass
                 if username and password:
-                    print_info("Облікові дані успішно розшифровано")
                     auth_username = username
                     return username, password
                 # Не вдалося розшифрувати — даємо інформативну пораду

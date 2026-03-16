@@ -55,7 +55,7 @@ def _load_profile_defaults(profile_name: str) -> dict[str, Any]:
         return defaults
 
     from olap_tool.core.profiles import load_profile
-    profile_data = load_profile(profile_name)
+    profile_data = load_profile(profile_name, silent=True)
     if not profile_data:
         return defaults
 

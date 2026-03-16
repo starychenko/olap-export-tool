@@ -161,17 +161,20 @@ def loading_spinner(description: str):
         sys.stdout.write(message)
         sys.stdout.flush()
         animation_stop_event.wait(0.1)
-    # Повністю очищаємо рядок спінера (без \n — наступний print сам додасть)
+    # Очищаємо рядок спінера і переходимо на новий рядок
     sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
     sys.stdout.flush()
 
 
 def countdown_timer(seconds: int):
+    message = ""
     for remaining in range(seconds, 0, -1):
         time_left = format_time(remaining)
-        sys.stdout.write(
-            f"\r{Fore.YELLOW}[{get_current_time()}] {COUNTDOWN_ICON}  Очікування: залишилось {time_left}..."
-        )
+        message = f"{Fore.YELLOW}[{get_current_time()}] {COUNTDOWN_ICON}  Очікування: залишилось {time_left}..."
+        sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
+        sys.stdout.write(message)
         sys.stdout.flush()
         time.sleep(1)
-    sys.stdout.write("\n")
+    # Очищаємо рядок countdown
+    sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
+    sys.stdout.flush()

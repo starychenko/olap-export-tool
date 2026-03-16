@@ -31,7 +31,7 @@ def ensure_profiles_dir() -> None:
         print_info(f"Створено директорію профілів: {PROFILES_DIR}")
 
 
-def load_profile(profile_name: str) -> Optional[Dict[str, Any]]:
+def load_profile(profile_name: str, silent: bool = False) -> Optional[Dict[str, Any]]:
     """
     Завантаження профілю з YAML файлу.
 
@@ -82,9 +82,10 @@ def load_profile(profile_name: str) -> Optional[Dict[str, Any]]:
             profile_data.setdefault("query", {})
             profile_data["query"]["timeout"] = profile_data["connection"]["timeout"]
 
-        print_info(f"Завантажено профіль: {profile_name}")
-        if "description" in profile_data:
-            print_info(f"  Опис: {profile_data['description']}")
+        if not silent:
+            print_info(f"Завантажено профіль: {profile_name}")
+            if "description" in profile_data:
+                print_info(f"  Опис: {profile_data['description']}")
 
         return profile_data
 

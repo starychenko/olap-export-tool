@@ -218,6 +218,13 @@ def run_dax_query(
             else:
                 renamed_columns.append(col.strip("[]"))
 
+        # Зупиняємо спінер ПЕРЕД будь-яким виводом
+        progress.animation_stop_event.set()
+        spinner_thread.join(timeout=1.0)
+
+        query_duration = _time.time() - query_start_time
+        print_success(f"Запит виконано за {format_time(query_duration)}.")
+
         if duplicate_columns and not getattr(run_dax_query, "_dup_warned", False):
             print_warning("Деякі стовпці не були перейменовані через потенційне дублювання:")
             for col in duplicate_columns:
@@ -225,11 +232,6 @@ def run_dax_query(
                 if match:
                     print_warning(f"  • {col} (конфлікт імені: {match.group(2)})")
             run_dax_query._dup_warned = True  # type: ignore[attr-defined]
-
-        progress.animation_stop_event.set()
-        spinner_thread.join(timeout=1.0)
-        query_duration = _time.time() - query_start_time
-        print_success(f"Запит виконано за {format_time(query_duration)}.")
 
         chunk_size = 50000
         total_rows = 0

@@ -12,6 +12,7 @@ from .prompt import prompt_credentials
 from ..core.utils import (
     print_info,
     print_info_detail,
+    print_progress,
     print_success,
     print_warning,
     print_error,
@@ -354,13 +355,11 @@ def connect_to_olap(
     try:
         if "Логін/пароль" in auth_method:
             if Pyadomd is not None:
-                print_info(
-                    "Спроба підключення через Pyadomd (ADOMD.NET) для автентифікації за логіном/паролем"
-                )
+                print_progress(f"Підключення до OLAP сервера {secrets.server}...")
                 try:
                     connection = Pyadomd(connection_string)
                     connection.open()
-                    print_success("Підключення через Pyadomd (ADOMD.NET) успішне")
+                    print_success("Підключення до OLAP сервера встановлено")
                     # Зберігаємо через явні дані
                     username = auth_details.get("_username")
                     password = auth_details.get("_password")
