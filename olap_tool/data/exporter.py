@@ -48,7 +48,8 @@ class XlsxStreamWriter:
     def __init__(self, file_path: Path, sheet_name: str, excel_header: "ExcelHeaderConfig", xlsx_config: "XlsxConfig"):
         self.file_path_str = str(file_path)
         self.xlsx_config = xlsx_config
-        # nan_inf_to_errors: NaN/Inf записуються як порожні клітинки замість помилки
+        # nan_inf_to_errors: дозволяє xlsxwriter обробляти NaN/Inf без винятку;
+        # самі значення чистимо в write_chunk() перед записом
         self.workbook = xlsxwriter.Workbook(self.file_path_str, {
             "constant_memory": True,
             "nan_inf_to_errors": True,
@@ -95,9 +96,10 @@ class XlsxStreamWriter:
                 if col_idx not in self.col_max_lengths or max_len > self.col_max_lengths[col_idx]:
                     self.col_max_lengths[col_idx] = max_len
 
-        # DataFrame → list of lists; NaN/Inf залишаються як float('nan')/float('inf')
-        # xlsxwriter з nan_inf_to_errors=True запише їх як порожні клітинки
-        rows = df.values.tolist()
+        # DataFrame → list of lists; NaN/Inf замінюємо на None,
+        # щоб xlsxwriter записав порожні клітинки замість #NUM! (#ЧИСЛО!)
+        df_clean = df.replace([np.inf, -np.inf], np.nan)
+        rows = df_clean.where(df_clean.notna(), other=None).values.tolist()
         for row in rows:
             self.worksheet.write_row(self.row_idx, 0, row)
             self.row_idx += 1
