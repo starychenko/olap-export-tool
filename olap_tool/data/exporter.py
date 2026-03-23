@@ -1,10 +1,14 @@
 import csv
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import xlsxwriter  # type: ignore
+
+_POS_INF = float('inf')
+_NEG_INF = float('-inf')
 
 if TYPE_CHECKING:
     from ..core.config import ExcelHeaderConfig, XlsxConfig
@@ -97,9 +101,14 @@ class XlsxStreamWriter:
                     self.col_max_lengths[col_idx] = max_len
 
         # DataFrame → list of lists; NaN/Inf замінюємо на None,
-        # щоб xlsxwriter записав порожні клітинки замість #NUM! (#ЧИСЛО!)
-        df_clean = df.replace([np.inf, -np.inf], np.nan)
-        rows = df_clean.where(df_clean.notna(), other=None).values.tolist()
+        # щоб xlsxwriter записав порожні клітинки замість #NUM! (#ЧИСЛО!).
+        # df.where(notna, None) не працює для float64 колонок (numpy конвертує
+        # None назад у NaN), тому чистимо вже після .values.tolist()
+        rows = df.values.tolist()
+        for row in rows:
+            for i, val in enumerate(row):
+                if isinstance(val, float) and (val != val or val == _POS_INF or val == _NEG_INF):
+                    row[i] = None
         for row in rows:
             self.worksheet.write_row(self.row_idx, 0, row)
             self.row_idx += 1

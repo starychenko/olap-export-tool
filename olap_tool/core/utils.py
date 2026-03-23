@@ -193,6 +193,23 @@ def convert_dotnet_to_python(value):
             return str(value)
         if isinstance(value, S.Boolean):
             return bool(value)
+    # pythonnet може авто-конвертувати .NET типи в Python native —
+    # обробляємо їх тут, щоб не потрапляли у str() fallback
+    if isinstance(value, float):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, datetime.datetime):
+        epoch = datetime.date(1899, 12, 30)
+        d = value.date()
+        return (d - epoch).days
+    if isinstance(value, datetime.date):
+        epoch = datetime.date(1899, 12, 30)
+        return (value - epoch).days
     try:
         return str(value)
     except Exception:
